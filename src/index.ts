@@ -23,9 +23,13 @@ import { z } from 'zod';
 import logger from './services/logger.config.js';
 import { HistoryManager } from './services/history-manager.js';
 import { executeCommand } from './services/command-executor.js';
+import { WebServer } from './services/web-server.js';
 
 // Initialize history manager
 const historyManager = new HistoryManager();
+
+// Initialize web server (will start in main())
+let webServer: WebServer | null = null;
 
 // Zod schemas for input validation
 const executeCommandSchema = z.object({
@@ -150,7 +154,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const result = await executeCommand(command, cwd, stdin, timeout);
 
       // Save to history
-      historyManager.saveCommand({
+      const historyEntry = {
         command,
         cwd: cwd || process.cwd(),
         timestamp: result.timestamp,
@@ -158,7 +162,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         duration: result.duration,
         stdout: result.stdout,
         stderr: result.stderr,
-      });
+      };
+      historyManager.saveCommand(historyEntry);
+
+      // Broadcast to web UI clients
+      if (webServer) {
+        webServer.broadcast('command_executed', historyEntry);
+      }
 
       return {
         content: [
@@ -307,6 +317,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 // Start server
 async function main() {
   try {
+    // Start web UI server
+    const webPort = parseInt(process.env.WEB_PORT || '3000');
+    webServer = new WebServer(historyManager, webPort);
+    await webServer.start();
+
+    // Start MCP server on stdio
     const transport = new StdioServerTransport();
     await server.connect(transport);
 
@@ -314,22 +330,23 @@ async function main() {
       {
         name: 'command-n-conquer',
         version: '1.0.0',
+        webPort,
       },
       'Command N Conquer MCP server started successfully'
     );
 
     // Graceful shutdown
-    process.on('SIGINT', () => {
-      logger.info('Received SIGINT, shutting down gracefully');
+    const shutdown = async () => {
+      logger.info('Shutting down gracefully...');
+      if (webServer) {
+        await webServer.stop();
+      }
       historyManager.close();
       process.exit(0);
-    });
+    };
 
-    process.on('SIGTERM', () => {
-      logger.info('Received SIGTERM, shutting down gracefully');
-      historyManager.close();
-      process.exit(0);
-    });
+    process.on('SIGINT', shutdown);
+    process.on('SIGTERM', shutdown);
   } catch (error) {
     logger.fatal({ error }, 'Failed to start MCP server');
     process.exit(1);

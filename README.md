@@ -64,6 +64,53 @@ Or in development mode:
 npm run dev
 ```
 
+## Web UI Dashboard
+
+Command N Conquer includes an integrated web dashboard for viewing logs, browsing command history, and monitoring execution statistics in real-time.
+
+### Accessing the Dashboard
+
+When the MCP server starts, the web UI automatically launches on **http://localhost:3000**
+
+You can customize the port using the `WEB_PORT` environment variable:
+
+```json
+{
+  "mcpServers": {
+    "command-n-conquer": {
+      "command": "node",
+      "args": ["/path/to/command_n_conquer/dist/index.js"],
+      "env": {
+        "LOG_LEVEL": "info",
+        "WEB_PORT": "3000"
+      }
+    }
+  }
+}
+```
+
+### Features
+
+- **Real-time Updates**: Live command execution updates via Server-Sent Events (SSE)
+- **Command History**: Browse all executed commands with exit codes, duration, and timestamps
+- **Full-Text Search**: Search across commands, stdout, and stderr
+- **Execution Logs**: View structured JSON logs with filtering
+- **Statistics Dashboard**: See total commands, failure rates, success rates, and average duration
+- **Dark Theme**: GitHub-inspired dark UI optimized for terminals
+
+### API Endpoints
+
+The web server exposes the following REST API endpoints:
+
+- `GET /` - Web dashboard (HTML interface)
+- `GET /api/history?limit=100` - Get recent command history
+- `GET /api/search?q=query&limit=50` - Full-text search commands
+- `GET /api/stats` - Get execution statistics
+- `GET /api/logs?limit=100` - Get recent logs
+- `GET /api/events` - Server-Sent Events for real-time updates
+- `DELETE /api/history` - Clear command history
+- `GET /health` - Health check endpoint
+
 ## Available Tools
 
 ### 1. execute_command
@@ -202,6 +249,7 @@ Get statistics about command execution history.
 | Error Categorization | ❌ | ✅ |
 | Output Searchability | ❌ | ✅ |
 | Statistics & Analytics | ❌ | ✅ |
+| Web UI Dashboard | ❌ | ✅ (Real-time) |
 
 ## Project Structure
 
@@ -212,9 +260,12 @@ command_n_conquer/
 │   ├── services/
 │   │   ├── command-executor.ts     # Command execution logic
 │   │   ├── history-manager.ts      # SQLite history management
-│   │   └── logger.config.ts        # Pino logger configuration
+│   │   ├── logger.config.ts        # Pino logger configuration
+│   │   └── web-server.ts           # Web UI server with SSE
 │   └── types/
 │       └── index.ts                # TypeScript type definitions
+├── public/
+│   └── index.html                  # Web dashboard UI
 ├── dist/                           # Compiled JavaScript
 ├── logs/                           # Log files (git-ignored)
 ├── data/                           # SQLite database (git-ignored)
@@ -264,7 +315,8 @@ npm run watch
 
 ## Environment Variables
 
-- `LOG_LEVEL`: Logging level (default: `info`)
+- `LOG_LEVEL`: Logging level (default: `info`) - Options: `trace`, `debug`, `info`, `warn`, `error`, `fatal`
+- `WEB_PORT`: Web UI port (default: `3000`)
 
 ## License
 
