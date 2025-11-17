@@ -303,14 +303,16 @@
       color: #da3633;
     }
 
-    .output-search {
+    .output-controls {
       padding: 8px 12px;
       background: #0d1117;
       border-bottom: 1px solid #30363d;
+      display: flex;
+      gap: 8px;
     }
 
-    .output-search input {
-      width: 100%;
+    .output-controls input {
+      flex: 1;
       padding: 6px 10px;
       background: #161b22;
       border: 1px solid #30363d;
@@ -319,9 +321,22 @@
       font-size: 12px;
     }
 
-    .output-search input:focus {
+    .output-controls input:focus {
       outline: none;
       border-color: #58a6ff;
+    }
+
+    .output-controls input.filter-input {
+      border-color: #9e6a03;
+    }
+
+    .output-controls input.filter-input:focus {
+      border-color: #f0883e;
+    }
+
+    .output-controls input.filter-input.active {
+      background: #3d2a00;
+      border-color: #f0883e;
     }
 
     .output-tabs {
@@ -371,11 +386,27 @@
       color: #f85149;
     }
 
+    .output-content.mixed .line-stderr {
+      color: #f85149;
+    }
+
+    .output-content.mixed .line-stdout {
+      color: #c9d1d9;
+    }
+
     .output-content mark {
       background: #9e6a03;
       color: white;
       padding: 2px 4px;
       border-radius: 2px;
+    }
+
+    .output-content.filtered .line {
+      display: none;
+    }
+
+    .output-content.filtered .line.match {
+      display: block;
     }
 
     .empty-state {
@@ -749,15 +780,17 @@
           <div class="output-title">${escapeHtml(cmd.command)}</div>
           <button class="output-close" onclick="removeOutputPanel(${cmdId})">×</button>
         </div>
-        <div class="output-search">
-          <input type="text" placeholder="Search in output..." onkeyup="searchInOutput(${cmdId}, this.value)">
+        <div class="output-controls">
+          <input type="text" placeholder="Search (highlight)..." onkeyup="searchInOutput(${cmdId}, this.value)">
+          <input type="text" class="filter-input" placeholder="Filter (regex/text)..." onkeyup="filterOutput(${cmdId}, this.value)">
         </div>
         <div class="output-tabs">
           <button class="output-tab active" onclick="switchOutputTab(${cmdId}, 'stdout')">STDOUT</button>
           <button class="output-tab" onclick="switchOutputTab(${cmdId}, 'stderr')">STDERR</button>
+          <button class="output-tab" onclick="switchOutputTab(${cmdId}, 'mixed')">MIXED</button>
           <button class="output-tab" onclick="switchOutputTab(${cmdId}, 'info')">INFO</button>
         </div>
-        <div class="output-content stdout" id="content-${cmdId}" data-full="${escapeHtml(cmd.stdout)}">${escapeHtml(cmd.stdout) || '(no output)'}</div>
+        <div class="output-content stdout" id="content-${cmdId}" data-stdout="${escapeHtml(cmd.stdout)}" data-stderr="${escapeHtml(cmd.stderr)}">${escapeHtml(cmd.stdout) || '(no output)'}</div>
       `;
 
       grid.appendChild(panel);
@@ -796,38 +829,139 @@
       const content = panel.querySelector('.output-content');
 
       tabs.forEach(tab => tab.classList.remove('active'));
-      panel.querySelector(`.output-tab:nth-child(${type === 'stdout' ? 1 : type === 'stderr' ? 2 : 3})`).classList.add('active');
+      const tabIndex = type === 'stdout' ? 1 : type === 'stderr' ? 2 : type === 'mixed' ? 3 : 4;
+      panel.querySelector(`.output-tab:nth-child(${tabIndex})`).classList.add('active');
+
+      // Clear any existing filter/search classes
+      content.className = 'output-content';
 
       if (type === 'stdout') {
-        content.className = 'output-content stdout';
-        content.setAttribute('data-full', escapeHtml(cmd.stdout));
-        content.textContent = cmd.stdout || '(no output)';
+        content.classList.add('stdout');
+        content.innerHTML = formatOutput(cmd.stdout || '(no output)', 'stdout');
       } else if (type === 'stderr') {
-        content.className = 'output-content stderr';
-        content.setAttribute('data-full', escapeHtml(cmd.stderr));
-        content.textContent = cmd.stderr || '(no errors)';
+        content.classList.add('stderr');
+        content.innerHTML = formatOutput(cmd.stderr || '(no errors)', 'stderr');
+      } else if (type === 'mixed') {
+        content.classList.add('mixed');
+        content.innerHTML = formatMixedOutput(cmd.stdout, cmd.stderr);
       } else {
-        content.className = 'output-content';
-        content.setAttribute('data-full', '');
-        content.textContent = `Command: ${cmd.command}\nCWD: ${cmd.cwd}\nExit Code: ${cmd.exitCode}\nDuration: ${cmd.duration}ms\nTimestamp: ${new Date(cmd.timestamp).toLocaleString()}`;
+        // Info tab
+        const infoText = `Command: ${cmd.command}\nCWD: ${cmd.cwd}\nExit Code: ${cmd.exitCode}\nDuration: ${cmd.duration}ms\nTimestamp: ${new Date(cmd.timestamp).toLocaleString()}`;
+        content.innerHTML = formatOutput(infoText, 'info');
       }
+
+      // Reapply any active filters
+      const filterInput = panel.querySelector('.filter-input');
+      if (filterInput && filterInput.value) {
+        filterOutput(cmdId, filterInput.value);
+      }
+    }
+
+    function formatOutput(text, type) {
+      if (!text) return '<div class="line">(empty)</div>';
+
+      const lines = text.split('\n');
+      return lines.map((line, idx) =>
+        `<div class="line line-${type}" data-line="${idx}">${escapeHtml(line)}</div>`
+      ).join('');
+    }
+
+    function formatMixedOutput(stdout, stderr) {
+      if (!stdout && !stderr) return '<div class="line">(no output)</div>';
+
+      let output = '';
+
+      if (stdout) {
+        const stdoutLines = stdout.split('\n');
+        stdoutLines.forEach((line, idx) => {
+          output += `<div class="line line-stdout" data-line="out-${idx}">${escapeHtml(line)}</div>`;
+        });
+      }
+
+      if (stderr) {
+        const stderrLines = stderr.split('\n');
+        stderrLines.forEach((line, idx) => {
+          output += `<div class="line line-stderr" data-line="err-${idx}">${escapeHtml(line)}</div>`;
+        });
+      }
+
+      return output || '<div class="line">(no output)</div>';
     }
 
     function searchInOutput(cmdId, query) {
       const content = document.getElementById(`content-${cmdId}`);
       if (!content) return;
 
-      const fullText = content.getAttribute('data-full') || '';
+      const lines = content.querySelectorAll('.line');
 
       if (!query) {
-        content.innerHTML = fullText;
+        // Remove all highlights
+        lines.forEach(line => {
+          const text = line.getAttribute('data-original') || line.textContent;
+          line.textContent = text;
+          line.removeAttribute('data-original');
+        });
         return;
       }
 
-      // Highlight matches
+      // Highlight matches in each line
       const regex = new RegExp(`(${escapeRegex(query)})`, 'gi');
-      const highlighted = fullText.replace(regex, '<mark>$1</mark>');
-      content.innerHTML = highlighted;
+      lines.forEach(line => {
+        if (!line.hasAttribute('data-original')) {
+          line.setAttribute('data-original', line.textContent);
+        }
+        const originalText = line.getAttribute('data-original');
+        const highlighted = originalText.replace(regex, '<mark>$1</mark>');
+        line.innerHTML = highlighted;
+      });
+    }
+
+    function filterOutput(cmdId, query) {
+      const panel = document.getElementById(`output-${cmdId}`);
+      if (!panel) return;
+
+      const content = panel.querySelector('.output-content');
+      const filterInput = panel.querySelector('.filter-input');
+      const lines = content.querySelectorAll('.line');
+
+      if (!query) {
+        // Clear filter
+        content.classList.remove('filtered');
+        lines.forEach(line => line.classList.remove('match'));
+        if (filterInput) filterInput.classList.remove('active');
+        return;
+      }
+
+      // Apply filter
+      content.classList.add('filtered');
+      if (filterInput) filterInput.classList.add('active');
+
+      // Try as regex first, fallback to plain text
+      let regex;
+      let isValidRegex = true;
+      try {
+        regex = new RegExp(query, 'i');
+      } catch (e) {
+        isValidRegex = false;
+      }
+
+      lines.forEach(line => {
+        const text = line.textContent;
+        let matches = false;
+
+        if (isValidRegex) {
+          matches = regex.test(text);
+        } else {
+          // Fallback to plain text search (case-insensitive)
+          matches = text.toLowerCase().includes(query.toLowerCase());
+        }
+
+        if (matches) {
+          line.classList.add('match');
+        } else {
+          line.classList.remove('match');
+        }
+      });
     }
 
     function updateOutputCount() {
@@ -886,12 +1020,27 @@
       const content = panel.querySelector('.output-content');
       const activeTab = panel.querySelector('.output-tab.active');
 
-      if (activeTab.textContent.includes('STDOUT')) {
-        content.setAttribute('data-full', escapeHtml(cmd.stdout));
-        content.textContent = cmd.stdout || '(no output)';
-      } else if (activeTab.textContent.includes('STDERR')) {
-        content.setAttribute('data-full', escapeHtml(cmd.stderr));
-        content.textContent = cmd.stderr || '(no errors)';
+      // Update stored data
+      content.setAttribute('data-stdout', escapeHtml(cmd.stdout));
+      content.setAttribute('data-stderr', escapeHtml(cmd.stderr));
+
+      // Update selected commands map
+      selectedCommands.set(cmd.id, cmd);
+
+      // Re-render current tab
+      const tabText = activeTab.textContent.trim().toUpperCase();
+      if (tabText.includes('STDOUT')) {
+        content.innerHTML = formatOutput(cmd.stdout || '(no output)', 'stdout');
+      } else if (tabText.includes('STDERR')) {
+        content.innerHTML = formatOutput(cmd.stderr || '(no errors)', 'stderr');
+      } else if (tabText.includes('MIXED')) {
+        content.innerHTML = formatMixedOutput(cmd.stdout, cmd.stderr);
+      }
+
+      // Reapply filters/search if active
+      const filterInput = panel.querySelector('.filter-input');
+      if (filterInput && filterInput.value) {
+        filterOutput(cmd.id, filterInput.value);
       }
     }
 
