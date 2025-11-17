@@ -12,350 +12,589 @@
     }
 
     body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Monaco', monospace;
       background: #0d1117;
       color: #c9d1d9;
-      line-height: 1.6;
+      overflow: hidden;
+      height: 100vh;
     }
 
-    .container {
-      max-width: 1400px;
-      margin: 0 auto;
-      padding: 20px;
+    .app-container {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
     }
 
     header {
       background: #161b22;
-      padding: 20px;
-      border-radius: 8px;
-      margin-bottom: 20px;
-      border: 1px solid #30363d;
+      padding: 16px 20px;
+      border-bottom: 1px solid #30363d;
+      flex-shrink: 0;
+    }
+
+    .header-content {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
     }
 
     h1 {
-      font-size: 28px;
-      margin-bottom: 10px;
+      font-size: 20px;
       color: #58a6ff;
-    }
-
-    .status {
-      display: inline-block;
-      padding: 4px 12px;
-      background: #238636;
-      color: white;
-      border-radius: 12px;
-      font-size: 12px;
-      font-weight: 600;
-    }
-
-    .status.connected { background: #238636; }
-    .status.disconnected { background: #da3633; }
-
-    .grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-      gap: 20px;
-      margin-bottom: 30px;
-    }
-
-    .card {
-      background: #161b22;
-      padding: 20px;
-      border-radius: 8px;
-      border: 1px solid #30363d;
-    }
-
-    .card h3 {
-      font-size: 14px;
-      color: #8b949e;
-      margin-bottom: 8px;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-    }
-
-    .card .value {
-      font-size: 32px;
-      font-weight: 700;
-      color: #58a6ff;
-    }
-
-    .tabs {
       display: flex;
+      align-items: center;
       gap: 10px;
-      margin-bottom: 20px;
-      border-bottom: 1px solid #30363d;
     }
 
-    .tab {
-      padding: 12px 24px;
-      background: transparent;
-      border: none;
+    .stats-bar {
+      display: flex;
+      gap: 20px;
+      font-size: 13px;
+    }
+
+    .stat-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .stat-label {
       color: #8b949e;
-      cursor: pointer;
+    }
+
+    .stat-value {
+      font-weight: 600;
+      color: #58a6ff;
+    }
+
+    .main-content {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+    }
+
+    .left-panel {
+      width: 400px;
+      background: #0d1117;
+      border-right: 1px solid #30363d;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .panel-header {
+      padding: 12px 16px;
+      background: #161b22;
+      border-bottom: 1px solid #30363d;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .panel-title {
       font-size: 14px;
-      font-weight: 500;
-      border-bottom: 2px solid transparent;
+      font-weight: 600;
+      color: #c9d1d9;
+    }
+
+    .btn-small {
+      padding: 4px 10px;
+      background: #21262d;
+      color: #c9d1d9;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 12px;
       transition: all 0.2s;
     }
 
-    .tab:hover {
-      color: #c9d1d9;
+    .btn-small:hover {
+      background: #30363d;
+      border-color: #58a6ff;
     }
 
-    .tab.active {
-      color: #58a6ff;
-      border-bottom-color: #58a6ff;
-    }
-
-    .tab-content {
-      display: none;
-    }
-
-    .tab-content.active {
-      display: block;
-    }
-
-    .search-bar {
-      margin-bottom: 20px;
-    }
-
-    .search-bar input {
-      width: 100%;
+    .search-box {
       padding: 12px;
       background: #0d1117;
+      border-bottom: 1px solid #30363d;
+    }
+
+    .search-input {
+      width: 100%;
+      padding: 8px 12px;
+      background: #161b22;
       border: 1px solid #30363d;
       border-radius: 6px;
       color: #c9d1d9;
-      font-size: 14px;
+      font-size: 13px;
     }
 
-    .search-bar input:focus {
+    .search-input:focus {
       outline: none;
       border-color: #58a6ff;
     }
 
-    table {
-      width: 100%;
-      border-collapse: collapse;
+    .command-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px;
+    }
+
+    .command-item {
+      padding: 12px;
+      margin-bottom: 6px;
       background: #161b22;
-      border-radius: 8px;
-      overflow: hidden;
-    }
-
-    th {
-      background: #21262d;
-      padding: 12px;
-      text-align: left;
-      font-size: 12px;
-      font-weight: 600;
-      color: #8b949e;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-    }
-
-    td {
-      padding: 12px;
-      border-top: 1px solid #30363d;
-      font-size: 14px;
-    }
-
-    tr:hover {
-      background: #21262d;
-    }
-
-    .badge {
-      display: inline-block;
-      padding: 2px 8px;
-      border-radius: 12px;
-      font-size: 11px;
-      font-weight: 600;
-    }
-
-    .badge.success {
-      background: #238636;
-      color: white;
-    }
-
-    .badge.error {
-      background: #da3633;
-      color: white;
-    }
-
-    .code {
-      font-family: 'Monaco', 'Menlo', monospace;
-      background: #0d1117;
-      padding: 2px 6px;
-      border-radius: 3px;
-      font-size: 12px;
-      color: #79c0ff;
-    }
-
-    .log-entry {
-      padding: 12px;
-      margin-bottom: 8px;
-      background: #0d1117;
-      border-radius: 6px;
-      border-left: 3px solid #30363d;
-      font-family: 'Monaco', 'Menlo', monospace;
-      font-size: 12px;
-    }
-
-    .log-entry.info { border-left-color: #58a6ff; }
-    .log-entry.warn { border-left-color: #f0883e; }
-    .log-entry.error { border-left-color: #da3633; }
-    .log-entry.debug { border-left-color: #8b949e; }
-
-    .log-time {
-      color: #8b949e;
-      margin-right: 12px;
-    }
-
-    .log-level {
-      display: inline-block;
-      padding: 2px 6px;
-      border-radius: 3px;
-      margin-right: 12px;
-      font-weight: 600;
-      font-size: 10px;
-    }
-
-    .log-level.info { background: #1f6feb; }
-    .log-level.warn { background: #9e6a03; }
-    .log-level.error { background: #d1242f; }
-    .log-level.debug { background: #6e7681; }
-
-    .log-msg {
-      color: #c9d1d9;
-    }
-
-    .btn {
-      padding: 8px 16px;
-      background: #238636;
-      color: white;
-      border: none;
+      border: 1px solid #30363d;
       border-radius: 6px;
       cursor: pointer;
-      font-size: 14px;
-      font-weight: 500;
-      transition: background 0.2s;
+      transition: all 0.2s;
+      position: relative;
     }
 
-    .btn:hover {
-      background: #2ea043;
+    .command-item:hover {
+      background: #21262d;
+      border-color: #58a6ff;
     }
 
-    .btn.danger {
-      background: #da3633;
+    .command-item.selected {
+      background: #1f6feb;
+      border-color: #58a6ff;
     }
 
-    .btn.danger:hover {
-      background: #f85149;
+    .command-item.running {
+      border-left: 3px solid #f0883e;
+      animation: pulse 2s infinite;
     }
 
-    .empty-state {
-      text-align: center;
-      padding: 60px 20px;
-      color: #8b949e;
+    .command-item.success {
+      border-left: 3px solid #238636;
     }
 
-    .empty-state svg {
-      width: 80px;
-      height: 80px;
-      margin-bottom: 20px;
-      opacity: 0.5;
-    }
-
-    .actions {
-      display: flex;
-      gap: 10px;
-      margin-bottom: 20px;
-      justify-content: flex-end;
+    .command-item.error {
+      border-left: 3px solid #da3633;
     }
 
     @keyframes pulse {
       0%, 100% { opacity: 1; }
-      50% { opacity: 0.5; }
+      50% { opacity: 0.7; }
     }
 
-    .live-indicator {
+    .command-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 6px;
+    }
+
+    .command-time {
+      font-size: 11px;
+      color: #8b949e;
+    }
+
+    .status-badge {
       display: inline-block;
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+
+    .status-badge.running {
+      background: #9e6a03;
+      color: white;
+    }
+
+    .status-badge.success {
+      background: #238636;
+      color: white;
+    }
+
+    .status-badge.error {
+      background: #da3633;
+      color: white;
+    }
+
+    .command-text {
+      font-family: 'Monaco', 'Menlo', monospace;
+      font-size: 12px;
+      color: #79c0ff;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .command-meta {
+      display: flex;
+      gap: 12px;
+      margin-top: 6px;
+      font-size: 11px;
+      color: #8b949e;
+    }
+
+    .right-panel {
+      flex: 1;
+      background: #0d1117;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .output-grid {
+      flex: 1;
+      display: grid;
+      gap: 12px;
+      padding: 12px;
+      overflow-y: auto;
+      grid-template-columns: 1fr;
+      grid-auto-rows: minmax(200px, auto);
+    }
+
+    .output-grid.two-columns {
+      grid-template-columns: repeat(2, 1fr);
+    }
+
+    .output-grid.three-columns {
+      grid-template-columns: repeat(3, 1fr);
+    }
+
+    .output-panel {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      display: flex;
+      flex-direction: column;
+      min-height: 200px;
+      max-height: 600px;
+    }
+
+    .output-header {
+      padding: 12px;
+      background: #21262d;
+      border-bottom: 1px solid #30363d;
+      border-radius: 8px 8px 0 0;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .output-title {
+      font-family: 'Monaco', 'Menlo', monospace;
+      font-size: 12px;
+      color: #79c0ff;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      flex: 1;
+    }
+
+    .output-close {
+      background: none;
+      border: none;
+      color: #8b949e;
+      cursor: pointer;
+      font-size: 18px;
+      padding: 0 4px;
+      line-height: 1;
+      transition: color 0.2s;
+    }
+
+    .output-close:hover {
+      color: #da3633;
+    }
+
+    .output-search {
+      padding: 8px 12px;
+      background: #0d1117;
+      border-bottom: 1px solid #30363d;
+    }
+
+    .output-search input {
+      width: 100%;
+      padding: 6px 10px;
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 4px;
+      color: #c9d1d9;
+      font-size: 12px;
+    }
+
+    .output-search input:focus {
+      outline: none;
+      border-color: #58a6ff;
+    }
+
+    .output-tabs {
+      display: flex;
+      background: #0d1117;
+      border-bottom: 1px solid #30363d;
+    }
+
+    .output-tab {
+      flex: 1;
+      padding: 8px;
+      background: none;
+      border: none;
+      color: #8b949e;
+      cursor: pointer;
+      font-size: 11px;
+      font-weight: 600;
+      border-bottom: 2px solid transparent;
+      transition: all 0.2s;
+    }
+
+    .output-tab:hover {
+      color: #c9d1d9;
+    }
+
+    .output-tab.active {
+      color: #58a6ff;
+      border-bottom-color: #58a6ff;
+    }
+
+    .output-content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px;
+      font-family: 'Monaco', 'Menlo', monospace;
+      font-size: 12px;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    .output-content.stdout {
+      color: #c9d1d9;
+    }
+
+    .output-content.stderr {
+      color: #f85149;
+    }
+
+    .output-content mark {
+      background: #9e6a03;
+      color: white;
+      padding: 2px 4px;
+      border-radius: 2px;
+    }
+
+    .empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      color: #8b949e;
+      text-align: center;
+      padding: 40px;
+    }
+
+    .empty-state svg {
+      width: 64px;
+      height: 64px;
+      margin-bottom: 16px;
+      opacity: 0.5;
+    }
+
+    .empty-state h3 {
+      font-size: 16px;
+      margin-bottom: 8px;
+      color: #c9d1d9;
+    }
+
+    .connection-indicator {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      background: #238636;
+      border-radius: 12px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .connection-indicator.disconnected {
+      background: #da3633;
+    }
+
+    .connection-dot {
       width: 8px;
       height: 8px;
       border-radius: 50%;
-      background: #238636;
-      margin-right: 8px;
-      animation: pulse 2s infinite;
+      background: white;
+      animation: blink 2s infinite;
+    }
+
+    @keyframes blink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+
+    ::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+
+    ::-webkit-scrollbar-track {
+      background: #0d1117;
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: #30363d;
+      border-radius: 4px;
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+      background: #484f58;
+    }
+
+    .notification-permission {
+      padding: 12px 20px;
+      background: #9e6a03;
+      color: white;
+      text-align: center;
+      font-size: 13px;
+      display: none;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .notification-permission.show {
+      display: flex;
+    }
+
+    .notification-permission button {
+      padding: 6px 12px;
+      background: white;
+      color: #0d1117;
+      border: none;
+      border-radius: 4px;
+      font-weight: 600;
+      cursor: pointer;
     }
   </style>
 </head>
 <body>
-  <div class="container">
+  <div class="app-container">
+    <div class="notification-permission" id="notification-prompt">
+      <span>Enable browser notifications to get alerts when commands complete?</span>
+      <button onclick="enableNotifications()">Enable Notifications</button>
+    </div>
+
     <header>
-      <h1>⚡ Command N Conquer</h1>
-      <p>Enhanced command execution with logging and history</p>
-      <div style="margin-top: 10px;">
-        <span class="status" id="connection-status">
-          <span class="live-indicator"></span>
-          <span id="status-text">Connecting...</span>
-        </span>
+      <div class="header-content">
+        <h1>
+          ⚡ Command N Conquer
+          <span class="connection-indicator" id="connection-status">
+            <span class="connection-dot"></span>
+            <span id="status-text">Connecting...</span>
+          </span>
+        </h1>
+        <div class="stats-bar">
+          <div class="stat-item">
+            <span class="stat-label">Total:</span>
+            <span class="stat-value" id="stat-total">-</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-label">Failed:</span>
+            <span class="stat-value" id="stat-failures">-</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-label">Success Rate:</span>
+            <span class="stat-value" id="stat-success-rate">-</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-label">Avg Duration:</span>
+            <span class="stat-value" id="stat-avg-duration">-</span>
+          </div>
+        </div>
       </div>
     </header>
 
-    <div class="grid" id="stats-grid">
-      <div class="card">
-        <h3>Total Commands</h3>
-        <div class="value" id="stat-total">-</div>
+    <div class="main-content">
+      <div class="left-panel">
+        <div class="panel-header">
+          <span class="panel-title">Commands</span>
+          <button class="btn-small" onclick="clearAllSelections()">Clear Selection</button>
+        </div>
+        <div class="search-box">
+          <input type="text" class="search-input" id="command-search" placeholder="Search commands..." onkeyup="handleCommandSearch()">
+        </div>
+        <div class="command-list" id="command-list">
+          <div class="empty-state">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <h3>No commands yet</h3>
+            <p>Commands will appear here as they execute</p>
+          </div>
+        </div>
       </div>
-      <div class="card">
-        <h3>Failed Commands</h3>
-        <div class="value" id="stat-failures">-</div>
-      </div>
-      <div class="card">
-        <h3>Success Rate</h3>
-        <div class="value" id="stat-success-rate">-</div>
-      </div>
-      <div class="card">
-        <h3>Avg Duration</h3>
-        <div class="value" id="stat-avg-duration">-</div>
-      </div>
-    </div>
 
-    <div class="tabs">
-      <button class="tab active" onclick="switchTab('history')">Command History</button>
-      <button class="tab" onclick="switchTab('logs')">Logs</button>
-    </div>
-
-    <div id="history-tab" class="tab-content active">
-      <div class="search-bar">
-        <input type="text" id="search-input" placeholder="Search commands, stdout, stderr..." onkeyup="handleSearch()">
+      <div class="right-panel">
+        <div class="panel-header">
+          <span class="panel-title">Output (<span id="output-count">0</span> selected)</span>
+          <div style="display: flex; gap: 8px;">
+            <button class="btn-small" onclick="setGridLayout(1)">1 Col</button>
+            <button class="btn-small" onclick="setGridLayout(2)">2 Col</button>
+            <button class="btn-small" onclick="setGridLayout(3)">3 Col</button>
+          </div>
+        </div>
+        <div class="output-grid" id="output-grid">
+          <div class="empty-state">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <path d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <h3>No outputs selected</h3>
+            <p>Click on commands in the left panel to view their output</p>
+          </div>
+        </div>
       </div>
-      <div class="actions">
-        <button class="btn" onclick="refreshHistory()">Refresh</button>
-        <button class="btn danger" onclick="clearHistory()">Clear History</button>
-      </div>
-      <div id="history-content"></div>
-    </div>
-
-    <div id="logs-tab" class="tab-content">
-      <div class="actions">
-        <button class="btn" onclick="refreshLogs()">Refresh</button>
-      </div>
-      <div id="logs-content"></div>
     </div>
   </div>
 
   <script>
     let eventSource = null;
-    let currentTab = 'history';
+    let selectedCommands = new Map();
+    let allCommands = [];
 
     // Initialize
     document.addEventListener('DOMContentLoaded', () => {
+      checkNotificationPermission();
       connectSSE();
       loadStats();
       loadHistory();
     });
 
-    // Connect to Server-Sent Events
+    function checkNotificationPermission() {
+      if ('Notification' in window && Notification.permission === 'default') {
+        document.getElementById('notification-prompt').classList.add('show');
+      }
+    }
+
+    async function enableNotifications() {
+      if ('Notification' in window) {
+        const permission = await Notification.requestPermission();
+        document.getElementById('notification-prompt').classList.remove('show');
+        if (permission === 'granted') {
+          new Notification('Command N Conquer', {
+            body: 'Notifications enabled! You\'ll be alerted when commands complete.',
+            icon: '/favicon.ico'
+          });
+        }
+      }
+    }
+
+    function showNotification(title, body, type = 'info') {
+      if ('Notification' in window && Notification.permission === 'granted') {
+        new Notification(title, {
+          body: body,
+          icon: '/favicon.ico',
+          tag: 'command-notification'
+        });
+      }
+    }
+
     function connectSSE() {
       eventSource = new EventSource('/api/events');
 
@@ -369,8 +608,19 @@
 
         if (data.type === 'command_executed') {
           loadStats();
-          if (currentTab === 'history') {
-            loadHistory();
+          loadHistory();
+
+          const cmd = data.data;
+          const status = cmd.exitCode === 0 ? 'completed successfully' : 'failed';
+          showNotification(
+            `Command ${status}`,
+            `${cmd.command.substring(0, 50)}...\nDuration: ${cmd.duration}ms`,
+            cmd.exitCode === 0 ? 'success' : 'error'
+          );
+
+          // Update output if this command is selected
+          if (selectedCommands.has(cmd.command + cmd.timestamp)) {
+            updateOutputPanel(cmd);
           }
         }
       };
@@ -385,10 +635,10 @@
       const status = document.getElementById('connection-status');
       const text = document.getElementById('status-text');
       if (connected) {
-        status.className = 'status connected';
+        status.className = 'connection-indicator';
         text.textContent = 'Live';
       } else {
-        status.className = 'status disconnected';
+        status.className = 'connection-indicator disconnected';
         text.textContent = 'Disconnected';
       }
     }
@@ -414,18 +664,20 @@
 
     async function loadHistory() {
       try {
-        const res = await fetch('/api/history?limit=100');
+        const res = await fetch('/api/history?limit=1000');
         const json = await res.json();
         if (json.success) {
-          renderHistory(json.data);
+          allCommands = json.data;
+          renderCommandList(allCommands);
         }
       } catch (error) {
         console.error('Failed to load history:', error);
       }
     }
 
-    function renderHistory(commands) {
-      const container = document.getElementById('history-content');
+    function renderCommandList(commands) {
+      const container = document.getElementById('command-list');
+
       if (commands.length === 0) {
         container.innerHTML = `
           <div class="empty-state">
@@ -433,143 +685,213 @@
               <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
             </svg>
             <h3>No commands yet</h3>
-            <p>Command history will appear here once you start executing commands</p>
+            <p>Commands will appear here as they execute</p>
           </div>
         `;
         return;
       }
 
-      const html = `
-        <table>
-          <thead>
-            <tr>
-              <th>Time</th>
-              <th>Command</th>
-              <th>Exit Code</th>
-              <th>Duration</th>
-              <th>CWD</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${commands.map(cmd => `
-              <tr>
-                <td>${new Date(cmd.timestamp).toLocaleString()}</td>
-                <td><span class="code">${escapeHtml(cmd.command)}</span></td>
-                <td>
-                  <span class="badge ${cmd.exitCode === 0 ? 'success' : 'error'}">
-                    ${cmd.exitCode}
-                  </span>
-                </td>
-                <td>${cmd.duration}ms</td>
-                <td><span style="color: #8b949e; font-size: 12px;">${escapeHtml(cmd.cwd)}</span></td>
-              </tr>
-            `).join('')}
-          </tbody>
-        </table>
-      `;
-      container.innerHTML = html;
-    }
+      const html = commands.map(cmd => {
+        const key = cmd.command + cmd.timestamp;
+        const isSelected = selectedCommands.has(key);
+        const statusClass = cmd.exitCode === 0 ? 'success' : 'error';
+        const statusText = cmd.exitCode === 0 ? 'Success' : 'Error';
 
-    async function loadLogs() {
-      try {
-        const res = await fetch('/api/logs?limit=100');
-        const json = await res.json();
-        if (json.success) {
-          renderLogs(json.data);
-        }
-      } catch (error) {
-        console.error('Failed to load logs:', error);
-      }
-    }
-
-    function renderLogs(logs) {
-      const container = document.getElementById('logs-content');
-      if (logs.length === 0) {
-        container.innerHTML = `
-          <div class="empty-state">
-            <h3>No logs yet</h3>
-            <p>Execution logs will appear here</p>
-          </div>
-        `;
-        return;
-      }
-
-      const html = logs.map(log => {
-        const level = getLevelName(log.level);
-        const time = new Date(log.time).toLocaleTimeString();
         return `
-          <div class="log-entry ${level}">
-            <span class="log-time">${time}</span>
-            <span class="log-level ${level}">${level.toUpperCase()}</span>
-            <span class="log-msg">${escapeHtml(log.msg)}</span>
+          <div class="command-item ${statusClass} ${isSelected ? 'selected' : ''}" onclick="toggleCommandSelection('${escapeHtml(key)}', ${cmd.id})">
+            <div class="command-header">
+              <span class="command-time">${new Date(cmd.timestamp).toLocaleString()}</span>
+              <span class="status-badge ${statusClass}">${statusText}</span>
+            </div>
+            <div class="command-text">${escapeHtml(cmd.command)}</div>
+            <div class="command-meta">
+              <span>Exit: ${cmd.exitCode}</span>
+              <span>Duration: ${cmd.duration}ms</span>
+              <span>ID: ${cmd.id}</span>
+            </div>
           </div>
         `;
       }).join('');
+
       container.innerHTML = html;
     }
 
-    function getLevelName(level) {
-      const levels = { 10: 'debug', 20: 'debug', 30: 'info', 40: 'warn', 50: 'error', 60: 'error' };
-      return levels[level] || 'info';
+    function toggleCommandSelection(key, cmdId) {
+      if (selectedCommands.has(key)) {
+        selectedCommands.delete(key);
+        removeOutputPanel(key);
+      } else {
+        // Find command data
+        const cmd = allCommands.find(c => (c.command + c.timestamp) === key);
+        if (cmd) {
+          selectedCommands.set(key, cmd);
+          addOutputPanel(key, cmd);
+        }
+      }
+
+      renderCommandList(allCommands);
+      updateOutputCount();
     }
 
-    async function handleSearch() {
-      const query = document.getElementById('search-input').value;
+    function addOutputPanel(key, cmd) {
+      const grid = document.getElementById('output-grid');
+
+      // Remove empty state if present
+      const emptyState = grid.querySelector('.empty-state');
+      if (emptyState) {
+        emptyState.remove();
+      }
+
+      const panel = document.createElement('div');
+      panel.className = 'output-panel';
+      panel.id = `output-${key}`;
+      panel.innerHTML = `
+        <div class="output-header">
+          <div class="output-title">${escapeHtml(cmd.command)}</div>
+          <button class="output-close" onclick="removeOutputPanel('${escapeHtml(key)}')">×</button>
+        </div>
+        <div class="output-search">
+          <input type="text" placeholder="Search in output..." onkeyup="searchInOutput('${escapeHtml(key)}', this.value)">
+        </div>
+        <div class="output-tabs">
+          <button class="output-tab active" onclick="switchOutputTab('${escapeHtml(key)}', 'stdout')">STDOUT</button>
+          <button class="output-tab" onclick="switchOutputTab('${escapeHtml(key)}', 'stderr')">STDERR</button>
+          <button class="output-tab" onclick="switchOutputTab('${escapeHtml(key)}', 'info')">INFO</button>
+        </div>
+        <div class="output-content stdout" id="content-${key}" data-full="${escapeHtml(cmd.stdout)}">${escapeHtml(cmd.stdout) || '(no output)'}</div>
+      `;
+
+      grid.appendChild(panel);
+    }
+
+    function removeOutputPanel(key) {
+      const panel = document.getElementById(`output-${key}`);
+      if (panel) {
+        panel.remove();
+      }
+      selectedCommands.delete(key);
+      renderCommandList(allCommands);
+      updateOutputCount();
+
+      // Show empty state if no panels left
+      const grid = document.getElementById('output-grid');
+      if (grid.children.length === 0) {
+        grid.innerHTML = `
+          <div class="empty-state">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <path d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <h3>No outputs selected</h3>
+            <p>Click on commands in the left panel to view their output</p>
+          </div>
+        `;
+      }
+    }
+
+    function switchOutputTab(key, type) {
+      const cmd = selectedCommands.get(key);
+      if (!cmd) return;
+
+      const panel = document.getElementById(`output-${key}`);
+      const tabs = panel.querySelectorAll('.output-tab');
+      const content = panel.querySelector('.output-content');
+
+      tabs.forEach(tab => tab.classList.remove('active'));
+      panel.querySelector(`.output-tab:nth-child(${type === 'stdout' ? 1 : type === 'stderr' ? 2 : 3})`).classList.add('active');
+
+      if (type === 'stdout') {
+        content.className = 'output-content stdout';
+        content.setAttribute('data-full', escapeHtml(cmd.stdout));
+        content.textContent = cmd.stdout || '(no output)';
+      } else if (type === 'stderr') {
+        content.className = 'output-content stderr';
+        content.setAttribute('data-full', escapeHtml(cmd.stderr));
+        content.textContent = cmd.stderr || '(no errors)';
+      } else {
+        content.className = 'output-content';
+        content.setAttribute('data-full', '');
+        content.textContent = `Command: ${cmd.command}\nCWD: ${cmd.cwd}\nExit Code: ${cmd.exitCode}\nDuration: ${cmd.duration}ms\nTimestamp: ${new Date(cmd.timestamp).toLocaleString()}`;
+      }
+    }
+
+    function searchInOutput(key, query) {
+      const content = document.getElementById(`content-${key}`);
+      if (!content) return;
+
+      const fullText = content.getAttribute('data-full') || '';
+
       if (!query) {
-        loadHistory();
+        content.innerHTML = fullText;
+        return;
+      }
+
+      // Highlight matches
+      const regex = new RegExp(`(${escapeRegex(query)})`, 'gi');
+      const highlighted = fullText.replace(regex, '<mark>$1</mark>');
+      content.innerHTML = highlighted;
+    }
+
+    function updateOutputCount() {
+      document.getElementById('output-count').textContent = selectedCommands.size;
+    }
+
+    function clearAllSelections() {
+      selectedCommands.clear();
+      renderCommandList(allCommands);
+
+      const grid = document.getElementById('output-grid');
+      grid.innerHTML = `
+        <div class="empty-state">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+            <path d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <h3>No outputs selected</h3>
+          <p>Click on commands in the left panel to view their output</p>
+        </div>
+      `;
+      updateOutputCount();
+    }
+
+    function setGridLayout(columns) {
+      const grid = document.getElementById('output-grid');
+      grid.className = 'output-grid';
+      if (columns === 2) grid.classList.add('two-columns');
+      if (columns === 3) grid.classList.add('three-columns');
+    }
+
+    async function handleCommandSearch() {
+      const query = document.getElementById('command-search').value.trim();
+
+      if (!query) {
+        renderCommandList(allCommands);
         return;
       }
 
       try {
-        const res = await fetch(`/api/search?q=${encodeURIComponent(query)}&limit=50`);
+        const res = await fetch(`/api/search?q=${encodeURIComponent(query)}&limit=100`);
         const json = await res.json();
         if (json.success) {
-          renderHistory(json.data);
+          renderCommandList(json.data);
         }
       } catch (error) {
         console.error('Search failed:', error);
       }
     }
 
-    function switchTab(tab) {
-      currentTab = tab;
-      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-      document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+    function updateOutputPanel(cmd) {
+      const key = cmd.command + cmd.timestamp;
+      const panel = document.getElementById(`output-${key}`);
+      if (!panel) return;
 
-      if (tab === 'history') {
-        document.querySelector('.tab:nth-child(1)').classList.add('active');
-        document.getElementById('history-tab').classList.add('active');
-        loadHistory();
-      } else if (tab === 'logs') {
-        document.querySelector('.tab:nth-child(2)').classList.add('active');
-        document.getElementById('logs-tab').classList.add('active');
-        loadLogs();
-      }
-    }
+      const content = panel.querySelector('.output-content');
+      const activeTab = panel.querySelector('.output-tab.active');
 
-    function refreshHistory() {
-      loadHistory();
-      loadStats();
-    }
-
-    function refreshLogs() {
-      loadLogs();
-    }
-
-    async function clearHistory() {
-      if (!confirm('Are you sure you want to clear command history?')) {
-        return;
-      }
-
-      try {
-        const res = await fetch('/api/history', { method: 'DELETE' });
-        const json = await res.json();
-        alert(json.message || 'History cleared');
-        loadHistory();
-        loadStats();
-      } catch (error) {
-        console.error('Failed to clear history:', error);
-        alert('Failed to clear history');
+      if (activeTab.textContent.includes('STDOUT')) {
+        content.setAttribute('data-full', escapeHtml(cmd.stdout));
+        content.textContent = cmd.stdout || '(no output)';
+      } else if (activeTab.textContent.includes('STDERR')) {
+        content.setAttribute('data-full', escapeHtml(cmd.stderr));
+        content.textContent = cmd.stderr || '(no errors)';
       }
     }
 
@@ -577,6 +899,10 @@
       const div = document.createElement('div');
       div.textContent = text;
       return div.innerHTML;
+    }
+
+    function escapeRegex(str) {
+      return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     }
   </script>
 </body>
