@@ -179,6 +179,40 @@
       50% { opacity: 0.7; }
     }
 
+    .command-actions {
+      display: none;
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      gap: 4px;
+    }
+
+    .command-item:hover .command-actions {
+      display: flex;
+    }
+
+    .btn-rerun {
+      padding: 4px 8px;
+      background: #238636;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 11px;
+      font-weight: 600;
+      transition: all 0.2s;
+    }
+
+    .btn-rerun:hover {
+      background: #2ea043;
+      transform: scale(1.05);
+    }
+
+    .btn-rerun.running {
+      background: #9e6a03;
+      animation: pulse 1.5s infinite;
+    }
+
     .command-header {
       display: flex;
       justify-content: space-between;
@@ -288,6 +322,12 @@
       flex: 1;
     }
 
+    .output-actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
     .output-close {
       background: none;
       border: none;
@@ -301,6 +341,27 @@
 
     .output-close:hover {
       color: #da3633;
+    }
+
+    .btn-rerun-output {
+      padding: 4px 10px;
+      background: #238636;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 11px;
+      font-weight: 600;
+      transition: all 0.2s;
+    }
+
+    .btn-rerun-output:hover {
+      background: #2ea043;
+    }
+
+    .btn-rerun-output.running {
+      background: #9e6a03;
+      animation: pulse 1.5s infinite;
     }
 
     .output-controls {
@@ -729,6 +790,9 @@
 
         return `
           <div class="command-item ${statusClass} ${isSelected ? 'selected' : ''}" onclick="toggleCommandSelection(${cmd.id})">
+            <div class="command-actions">
+              <button class="btn-rerun" onclick="event.stopPropagation(); rerunCommand(${cmd.id})" title="Rerun this command">▶ Rerun</button>
+            </div>
             <div class="command-header">
               <span class="command-time">${new Date(cmd.timestamp).toLocaleString()}</span>
               <span class="status-badge ${statusClass}">${statusText}</span>
@@ -778,7 +842,10 @@
       panel.innerHTML = `
         <div class="output-header">
           <div class="output-title">${escapeHtml(cmd.command)}</div>
-          <button class="output-close" onclick="removeOutputPanel(${cmdId})">×</button>
+          <div class="output-actions">
+            <button class="btn-rerun-output" onclick="rerunCommand(${cmdId})" title="Rerun this command">▶ Rerun</button>
+            <button class="output-close" onclick="removeOutputPanel(${cmdId})">×</button>
+          </div>
         </div>
         <div class="output-controls">
           <input type="text" placeholder="Search (highlight)..." onkeyup="searchInOutput(${cmdId}, this.value)">
@@ -1041,6 +1108,64 @@
       const filterInput = panel.querySelector('.filter-input');
       if (filterInput && filterInput.value) {
         filterOutput(cmd.id, filterInput.value);
+      }
+    }
+
+    async function rerunCommand(cmdId) {
+      const cmd = allCommands.find(c => c.id === cmdId);
+      if (!cmd) {
+        alert('Command not found');
+        return;
+      }
+
+      // Set button to running state
+      const buttons = document.querySelectorAll(`[onclick*="rerunCommand(${cmdId})"]`);
+      buttons.forEach(btn => {
+        btn.classList.add('running');
+        btn.textContent = '⏳ Running...';
+        btn.disabled = true;
+      });
+
+      try {
+        const response = await fetch('/api/execute', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            command: cmd.command,
+            cwd: cmd.cwd,
+            timeout: 300000
+          })
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+          showNotification(
+            'Command completed',
+            `${cmd.command.substring(0, 50)}...\nExit: ${result.data.exitCode}, Duration: ${result.data.duration}ms`,
+            result.data.exitCode === 0 ? 'success' : 'error'
+          );
+
+          // Refresh history to show new execution
+          setTimeout(() => {
+            loadHistory();
+            loadStats();
+          }, 500);
+        } else {
+          showNotification('Command failed', result.error || 'Unknown error', 'error');
+        }
+      } catch (error) {
+        console.error('Failed to rerun command:', error);
+        showNotification('Error', 'Failed to execute command', 'error');
+      } finally {
+        // Reset button state
+        buttons.forEach(btn => {
+          btn.classList.remove('running');
+          btn.textContent = '▶ Rerun';
+          btn.disabled = false;
+        });
       }
     }
 

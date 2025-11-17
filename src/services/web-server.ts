@@ -8,6 +8,7 @@ import cors from 'cors';
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import type { HistoryManager } from './history-manager.js';
+import { executeCommand } from './command-executor.js';
 import logger from './logger.config.js';
 
 export class WebServer {
@@ -123,6 +124,61 @@ export class WebServer {
       } catch (error) {
         logger.error({ error }, 'Failed to clear history');
         res.status(500).json({ success: false, error: 'Failed to clear history' });
+      }
+    });
+
+    // API: Execute command
+    this.app.post('/api/execute', async (req: Request, res: Response) => {
+      try {
+        const { command, cwd, stdin, timeout } = req.body;
+
+        if (!command) {
+          return res.status(400).json({ success: false, error: 'Command is required' });
+        }
+
+        logger.info({ command, cwd, timeout }, 'Executing command via web API');
+
+        // Execute the command
+        const result = await executeCommand(
+          command,
+          cwd || process.cwd(),
+          stdin,
+          timeout || 300000
+        );
+
+        // Save to history
+        const historyEntry = {
+          command,
+          cwd: cwd || process.cwd(),
+          timestamp: result.timestamp,
+          exitCode: result.exitCode,
+          duration: result.duration,
+          stdout: result.stdout,
+          stderr: result.stderr,
+        };
+        const id = this.historyManager.saveCommand(historyEntry);
+
+        // Broadcast to SSE clients
+        this.broadcast('command_executed', { ...historyEntry, id });
+
+        res.json({
+          success: true,
+          data: {
+            id,
+            command,
+            exitCode: result.exitCode,
+            duration: result.duration,
+            timestamp: result.timestamp,
+            stdout: result.stdout,
+            stderr: result.stderr,
+          }
+        });
+      } catch (error: any) {
+        logger.error({ error }, 'Failed to execute command');
+        res.status(500).json({
+          success: false,
+          error: error.message || 'Failed to execute command'
+        });
       }
     });
 
