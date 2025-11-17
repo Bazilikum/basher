@@ -555,7 +555,7 @@
 
   <script>
     let eventSource = null;
-    let selectedCommands = new Map();
+    let selectedCommands = new Map(); // Key: command ID, Value: command object
     let allCommands = [];
 
     // Initialize
@@ -619,7 +619,7 @@
           );
 
           // Update output if this command is selected
-          if (selectedCommands.has(cmd.command + cmd.timestamp)) {
+          if (cmd.id && selectedCommands.has(cmd.id)) {
             updateOutputPanel(cmd);
           }
         }
@@ -692,13 +692,12 @@
       }
 
       const html = commands.map(cmd => {
-        const key = cmd.command + cmd.timestamp;
-        const isSelected = selectedCommands.has(key);
+        const isSelected = selectedCommands.has(cmd.id);
         const statusClass = cmd.exitCode === 0 ? 'success' : 'error';
         const statusText = cmd.exitCode === 0 ? 'Success' : 'Error';
 
         return `
-          <div class="command-item ${statusClass} ${isSelected ? 'selected' : ''}" onclick="toggleCommandSelection('${escapeHtml(key)}', ${cmd.id})">
+          <div class="command-item ${statusClass} ${isSelected ? 'selected' : ''}" onclick="toggleCommandSelection(${cmd.id})">
             <div class="command-header">
               <span class="command-time">${new Date(cmd.timestamp).toLocaleString()}</span>
               <span class="status-badge ${statusClass}">${statusText}</span>
@@ -716,16 +715,16 @@
       container.innerHTML = html;
     }
 
-    function toggleCommandSelection(key, cmdId) {
-      if (selectedCommands.has(key)) {
-        selectedCommands.delete(key);
-        removeOutputPanel(key);
+    function toggleCommandSelection(cmdId) {
+      if (selectedCommands.has(cmdId)) {
+        selectedCommands.delete(cmdId);
+        removeOutputPanel(cmdId);
       } else {
         // Find command data
-        const cmd = allCommands.find(c => (c.command + c.timestamp) === key);
+        const cmd = allCommands.find(c => c.id === cmdId);
         if (cmd) {
-          selectedCommands.set(key, cmd);
-          addOutputPanel(key, cmd);
+          selectedCommands.set(cmdId, cmd);
+          addOutputPanel(cmdId, cmd);
         }
       }
 
@@ -733,7 +732,7 @@
       updateOutputCount();
     }
 
-    function addOutputPanel(key, cmd) {
+    function addOutputPanel(cmdId, cmd) {
       const grid = document.getElementById('output-grid');
 
       // Remove empty state if present
@@ -744,32 +743,32 @@
 
       const panel = document.createElement('div');
       panel.className = 'output-panel';
-      panel.id = `output-${key}`;
+      panel.id = `output-${cmdId}`;
       panel.innerHTML = `
         <div class="output-header">
           <div class="output-title">${escapeHtml(cmd.command)}</div>
-          <button class="output-close" onclick="removeOutputPanel('${escapeHtml(key)}')">×</button>
+          <button class="output-close" onclick="removeOutputPanel(${cmdId})">×</button>
         </div>
         <div class="output-search">
-          <input type="text" placeholder="Search in output..." onkeyup="searchInOutput('${escapeHtml(key)}', this.value)">
+          <input type="text" placeholder="Search in output..." onkeyup="searchInOutput(${cmdId}, this.value)">
         </div>
         <div class="output-tabs">
-          <button class="output-tab active" onclick="switchOutputTab('${escapeHtml(key)}', 'stdout')">STDOUT</button>
-          <button class="output-tab" onclick="switchOutputTab('${escapeHtml(key)}', 'stderr')">STDERR</button>
-          <button class="output-tab" onclick="switchOutputTab('${escapeHtml(key)}', 'info')">INFO</button>
+          <button class="output-tab active" onclick="switchOutputTab(${cmdId}, 'stdout')">STDOUT</button>
+          <button class="output-tab" onclick="switchOutputTab(${cmdId}, 'stderr')">STDERR</button>
+          <button class="output-tab" onclick="switchOutputTab(${cmdId}, 'info')">INFO</button>
         </div>
-        <div class="output-content stdout" id="content-${key}" data-full="${escapeHtml(cmd.stdout)}">${escapeHtml(cmd.stdout) || '(no output)'}</div>
+        <div class="output-content stdout" id="content-${cmdId}" data-full="${escapeHtml(cmd.stdout)}">${escapeHtml(cmd.stdout) || '(no output)'}</div>
       `;
 
       grid.appendChild(panel);
     }
 
-    function removeOutputPanel(key) {
-      const panel = document.getElementById(`output-${key}`);
+    function removeOutputPanel(cmdId) {
+      const panel = document.getElementById(`output-${cmdId}`);
       if (panel) {
         panel.remove();
       }
-      selectedCommands.delete(key);
+      selectedCommands.delete(cmdId);
       renderCommandList(allCommands);
       updateOutputCount();
 
@@ -788,11 +787,11 @@
       }
     }
 
-    function switchOutputTab(key, type) {
-      const cmd = selectedCommands.get(key);
+    function switchOutputTab(cmdId, type) {
+      const cmd = selectedCommands.get(cmdId);
       if (!cmd) return;
 
-      const panel = document.getElementById(`output-${key}`);
+      const panel = document.getElementById(`output-${cmdId}`);
       const tabs = panel.querySelectorAll('.output-tab');
       const content = panel.querySelector('.output-content');
 
@@ -814,8 +813,8 @@
       }
     }
 
-    function searchInOutput(key, query) {
-      const content = document.getElementById(`content-${key}`);
+    function searchInOutput(cmdId, query) {
+      const content = document.getElementById(`content-${cmdId}`);
       if (!content) return;
 
       const fullText = content.getAttribute('data-full') || '';
@@ -879,8 +878,9 @@
     }
 
     function updateOutputPanel(cmd) {
-      const key = cmd.command + cmd.timestamp;
-      const panel = document.getElementById(`output-${key}`);
+      if (!cmd.id) return;
+
+      const panel = document.getElementById(`output-${cmd.id}`);
       if (!panel) return;
 
       const content = panel.querySelector('.output-content');
