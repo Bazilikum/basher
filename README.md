@@ -283,6 +283,54 @@ Configure Basher via environment variables in your MCP config:
 }
 ```
 
+### Running Multiple Instances Simultaneously
+
+When running Basher across multiple projects at the same time, you need to configure unique ports and database paths to avoid conflicts:
+
+#### Using Project-Scoped `.mcp.json`
+
+Create `.mcp.json` in each project with unique configuration:
+
+**Project A:**
+```json
+{
+  "mcpServers": {
+    "basher": {
+      "command": "npx",
+      "args": ["-y", "github:Bazilikum/basher"],
+      "env": {
+        "WEB_PORT": "3001",
+        "DB_PATH": "./.basher/history.db"
+      }
+    }
+  }
+}
+```
+
+**Project B:**
+```json
+{
+  "mcpServers": {
+    "basher": {
+      "command": "npx",
+      "args": ["-y", "github:Bazilikum/basher"],
+      "env": {
+        "WEB_PORT": "3002",
+        "DB_PATH": "./.basher/history.db"
+      }
+    }
+  }
+}
+```
+
+This ensures:
+- ✅ Each project has its own isolated command history
+- ✅ Each web dashboard runs on a different port
+- ✅ No conflicts between instances
+- ✅ Database files are stored within each project directory
+
+**Note**: If `DB_PATH` is not specified, all instances will default to `./data/command-history.db` in their respective working directories.
+
 ## Available Tools
 
 ### 1. execute_command

@@ -28,7 +28,8 @@ import { WebServer } from './services/web-server.js';
 import { encodeOutput, type OutputFormat } from './utils/toon-encoder.js';
 
 // Initialize history manager
-const historyManager = new HistoryManager();
+const dbPath = process.env.DB_PATH; // Optional custom database path
+const historyManager = new HistoryManager(dbPath);
 
 // Initialize web server (will start in main())
 let webServer: WebServer | null = null;
