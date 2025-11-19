@@ -1,0 +1,140 @@
+{
+  "name": "basher-vscode",
+  "displayName": "Basher",
+  "description": "Enhanced command execution dashboard integrated into VS Code",
+  "version": "1.0.0",
+  "publisher": "bazilikum",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "basher",
+          "title": "Basher",
+          "icon": "$(terminal)"
+        }
+      ]
+    },
+    "views": {
+      "basher": [
+        {
+          "id": "commandNConquer.commandHistory",
+          "name": "Command History"
+        },
+        {
+          "id": "commandNConquer.stats",
+          "name": "Statistics"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "commandNConquer.focus",
+        "title": "Show Basher",
+        "category": "Basher"
+      },
+      {
+        "command": "commandNConquer.refresh",
+        "title": "Refresh",
+        "icon": "$(refresh)",
+        "category": "Basher"
+      },
+      {
+        "command": "commandNConquer.openOutput",
+        "title": "Open Output",
+        "icon": "$(output)",
+        "category": "Basher"
+      },
+      {
+        "command": "commandNConquer.rerunCommand",
+        "title": "Rerun Command",
+        "icon": "$(play)",
+        "category": "Basher"
+      },
+      {
+        "command": "commandNConquer.openWebDashboard",
+        "title": "Open Web Dashboard",
+        "icon": "$(globe)",
+        "category": "Basher"
+      },
+      {
+        "command": "commandNConquer.searchHistory",
+        "title": "Search Command History",
+        "icon": "$(search)",
+        "category": "Basher"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "commandNConquer.refresh",
+          "when": "view == commandNConquer.commandHistory",
+          "group": "navigation"
+        },
+        {
+          "command": "commandNConquer.searchHistory",
+          "when": "view == commandNConquer.commandHistory",
+          "group": "navigation"
+        },
+        {
+          "command": "commandNConquer.openWebDashboard",
+          "when": "view == commandNConquer.commandHistory",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "commandNConquer.openOutput",
+          "when": "view == commandNConquer.commandHistory && viewItem == commandItem",
+          "group": "inline"
+        },
+        {
+          "command": "commandNConquer.rerunCommand",
+          "when": "view == commandNConquer.commandHistory && viewItem == commandItem",
+          "group": "inline"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Basher",
+      "properties": {
+        "commandNConquer.serverUrl": {
+          "type": "string",
+          "default": "http://localhost:3000",
+          "description": "URL of the Basher web server"
+        },
+        "commandNConquer.refreshInterval": {
+          "type": "number",
+          "default": 5000,
+          "description": "Auto-refresh interval in milliseconds (0 to disable)"
+        },
+        "commandNConquer.maxHistoryItems": {
+          "type": "number",
+          "default": 100,
+          "description": "Maximum number of history items to display"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^2.22.0",
+    "typescript": "^5.3.3"
+  }
+}

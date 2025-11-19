@@ -1,11 +1,11 @@
 {
-  "name": "command-n-conquer",
+  "name": "basher",
   "version": "1.0.0",
-  "description": "MCP server for executing commands with enhanced logging, history tracking, and improved visibility",
+  "description": "Basher - MCP server for executing commands with enhanced logging, history tracking, and improved visibility",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "command-n-conquer": "dist/index.js"
+    "basher": "dist/index.js"
   },
   "scripts": {
     "build": "tsc",
@@ -24,6 +24,7 @@
   "license": "MIT",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.22.0",
+    "@toon-format/toon": "^1.0.0",
     "better-sqlite3": "^12.4.1",
     "cors": "^2.8.5",
     "express": "^5.1.0",

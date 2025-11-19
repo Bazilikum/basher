@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Command N Conquer - Dashboard</title>
+  <title>Basher - Dashboard</title>
   <style>
     * {
       margin: 0;
@@ -576,7 +576,7 @@
     <header>
       <div class="header-content">
         <h1>
-          ⚡ Command N Conquer
+          ⚡ Basher
           <span class="connection-indicator" id="connection-status">
             <span class="connection-dot"></span>
             <span id="status-text">Connecting...</span>
@@ -669,7 +669,7 @@
         const permission = await Notification.requestPermission();
         document.getElementById('notification-prompt').classList.remove('show');
         if (permission === 'granted') {
-          new Notification('Command N Conquer', {
+          new Notification('Basher', {
             body: 'Notifications enabled! You\'ll be alerted when commands complete.',
             icon: '/favicon.ico'
           });

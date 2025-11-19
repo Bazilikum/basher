@@ -9,6 +9,7 @@ import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import type { HistoryManager } from './history-manager.js';
 import { executeCommand } from './command-executor.js';
+import { processManager } from './process-manager.js';
 import logger from './logger.config.js';
 
 export class WebServer {
@@ -155,6 +156,8 @@ export class WebServer {
           duration: result.duration,
           stdout: result.stdout,
           stderr: result.stderr,
+          processId: result.processId,
+          status: 'completed',
         };
         const id = this.historyManager.saveCommand(historyEntry);
 
@@ -179,6 +182,53 @@ export class WebServer {
           success: false,
           error: error.message || 'Failed to execute command'
         });
+      }
+    });
+
+    // API: Terminate/kill a running command
+    this.app.post('/api/terminate/:processId', (req: Request, res: Response) => {
+      try {
+        const processId = parseInt(req.params.processId);
+
+        if (isNaN(processId)) {
+          return res.status(400).json({ success: false, error: 'Invalid process ID' });
+        }
+
+        logger.info({ processId }, 'Terminating command via web API');
+
+        const success = processManager.kill(processId);
+
+        if (success) {
+          // Broadcast termination event
+          this.broadcast('command_terminated', { processId });
+
+          res.json({
+            success: true,
+            message: `Process ${processId} terminated`
+          });
+        } else {
+          res.status(404).json({
+            success: false,
+            error: 'Process not found or already completed'
+          });
+        }
+      } catch (error: any) {
+        logger.error({ error }, 'Failed to terminate command');
+        res.status(500).json({
+          success: false,
+          error: error.message || 'Failed to terminate command'
+        });
+      }
+    });
+
+    // API: Get running commands
+    this.app.get('/api/running', (req: Request, res: Response) => {
+      try {
+        const running = processManager.getRunning();
+        res.json({ success: true, data: running });
+      } catch (error: any) {
+        logger.error({ error }, 'Failed to get running commands');
+        res.status(500).json({ success: false, error: error.message });
       }
     });
 
@@ -262,10 +312,10 @@ export class WebServer {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Command N Conquer - Dashboard</title>
+  <title>Basher - Dashboard</title>
 </head>
 <body>
-  <h1>Command N Conquer Dashboard</h1>
+  <h1>Basher Dashboard</h1>
   <p>Web UI is running, but public/index.html is missing.</p>
   <p>API endpoints are available at:</p>
   <ul>

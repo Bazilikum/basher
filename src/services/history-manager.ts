@@ -8,9 +8,11 @@ import { join } from 'path';
 import { mkdirSync } from 'fs';
 import type { CommandHistoryEntry } from '../types/index.js';
 import logger from './logger.config.js';
+import { AdvancedQueries } from './advanced-queries.js';
 
 export class HistoryManager {
   private db: Database.Database;
+  public advanced: AdvancedQueries;
 
   constructor(dbPath: string = join(process.cwd(), 'data', 'command-history.db')) {
     // Ensure data directory exists
@@ -23,11 +25,12 @@ export class HistoryManager {
 
     this.db = new Database(dbPath);
     this.initDatabase();
-    logger.info({ dbPath }, 'History database initialized');
+    this.advanced = new AdvancedQueries(this.db);
+    logger.info({ dbPath }, 'History database initialized with advanced queries');
   }
 
   private initDatabase(): void {
-    // Create main history table
+    // Create main history table (without new columns initially for compatibility)
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS command_history (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -65,17 +68,42 @@ export class HistoryManager {
       END;
     `);
 
+    // Migrate existing databases to add new columns if they don't exist
+    this.migrateDatabase();
+
     logger.debug('Database schema initialized');
+  }
+
+  private migrateDatabase(): void {
+    try {
+      // Check if process_id column exists
+      const columns = this.db.prepare("PRAGMA table_info(command_history)").all() as any[];
+      const hasProcessId = columns.some((col: any) => col.name === 'process_id');
+      const hasStatus = columns.some((col: any) => col.name === 'status');
+
+      if (!hasProcessId) {
+        this.db.exec('ALTER TABLE command_history ADD COLUMN process_id INTEGER');
+        logger.info('Added process_id column to command_history');
+      }
+
+      if (!hasStatus) {
+        this.db.exec("ALTER TABLE command_history ADD COLUMN status TEXT DEFAULT 'completed'");
+        this.db.exec('CREATE INDEX IF NOT EXISTS idx_status ON command_history(status)');
+        logger.info('Added status column to command_history');
+      }
+    } catch (error) {
+      logger.error({ error }, 'Failed to migrate database');
+    }
   }
 
   /**
    * Save a command execution to history
    */
-  saveCommand(entry: CommandHistoryEntry): number {
+  saveCommand(entry: CommandHistoryEntry & { processId?: number; status?: string }): number {
     try {
       const stmt = this.db.prepare(`
-        INSERT INTO command_history (command, cwd, timestamp, exit_code, duration, stdout, stderr)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO command_history (command, cwd, timestamp, exit_code, duration, stdout, stderr, process_id, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
       const result = stmt.run(
@@ -85,15 +113,39 @@ export class HistoryManager {
         entry.exitCode,
         entry.duration,
         entry.stdout,
-        entry.stderr
+        entry.stderr,
+        entry.processId || null,
+        entry.status || 'completed'
       );
 
       const id = result.lastInsertRowid as number;
-      logger.debug({ id, command: entry.command }, 'Command saved to history');
+      logger.debug({ id, command: entry.command, processId: entry.processId, status: entry.status }, 'Command saved to history');
       return id;
     } catch (error) {
       logger.error({ error, entry }, 'Failed to save command to history');
       throw error;
+    }
+  }
+
+  /**
+   * Update command status (e.g., from 'running' to 'completed')
+   */
+  updateStatus(id: number, status: string, exitCode?: number, duration?: number, stdout?: string, stderr?: string): void {
+    try {
+      const stmt = this.db.prepare(`
+        UPDATE command_history
+        SET status = ?,
+            exit_code = COALESCE(?, exit_code),
+            duration = COALESCE(?, duration),
+            stdout = COALESCE(?, stdout),
+            stderr = COALESCE(?, stderr)
+        WHERE id = ?
+      `);
+
+      stmt.run(status, exitCode, duration, stdout, stderr, id);
+      logger.debug({ id, status }, 'Command status updated');
+    } catch (error) {
+      logger.error({ error, id, status }, 'Failed to update command status');
     }
   }
 

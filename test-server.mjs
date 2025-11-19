@@ -57,7 +57,7 @@ setTimeout(() => {
     params: {
       name: 'execute_command',
       arguments: {
-        command: 'echo "Hello from Command N Conquer!"',
+        command: 'echo "Hello from Basher!"',
         timeout: 5000
       }
     }
