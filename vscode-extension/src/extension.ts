@@ -228,11 +228,12 @@ class StatsProvider implements vscode.TreeDataProvider<StatsTreeItem> {
 // Stats Tree Item
 class StatsTreeItem extends vscode.TreeItem {
   constructor(
-    public readonly label: string,
+    public readonly labelText: string,
     public readonly value: string,
     iconName: string
   ) {
-    super(`${label}: ${value}`, vscode.TreeItemCollapsibleState.None);
+    super(labelText, vscode.TreeItemCollapsibleState.None);
+    this.description = value;
     this.iconPath = new vscode.ThemeIcon(iconName);
   }
 }

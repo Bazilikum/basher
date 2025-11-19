@@ -22,110 +22,56 @@ MCP server for executing shell commands with enhanced logging, history tracking,
 
 ## Installation
 
-1. Clone the repository:
+### Quick Install (Recommended)
+
+Install Basher directly from GitHub using Claude Code:
+
+```bash
+claude mcp add --transport stdio basher --env WEB_PORT=3000 --env LOG_LEVEL=info -- npx -y github:Bazilikum/basher
+```
+
+This command:
+- Downloads and installs Basher automatically from GitHub
+- Configures it as an MCP server in Claude Code
+- Sets up the web UI on port 3000
+- No manual cloning or building required
+
+**Verify installation:**
+```bash
+claude mcp list
+```
+
+You should see `basher` in the list of configured servers.
+
+### Manual Installation (For Development)
+
+If you want to develop or modify Basher:
+
+1. **Clone and build:**
+
 ```bash
 git clone https://github.com/Bazilikum/basher.git
 cd basher
-```
-
-2. Install dependencies:
-```bash
 npm install
-```
-
-3. Build the project:
-```bash
 npm run build
 ```
 
-## Usage
+2. **Add to Claude Code:**
 
-### With Claude Desktop
+```bash
+claude mcp add --transport stdio basher --env WEB_PORT=3000 --env LOG_LEVEL=info -- node $(pwd)/dist/index.js
+```
 
-Add to your `claude_desktop_config.json`:
+### Share with Your Team
+
+Create `.mcp.json` in your project root to share the configuration:
 
 ```json
 {
   "mcpServers": {
     "basher": {
-      "command": "node",
-      "args": ["/absolute/path/to/basher/dist/index.js"],
-      "env": {
-        "LOG_LEVEL": "info"
-      }
-    }
-  }
-}
-```
-
-Replace `/absolute/path/to/basher` with the actual path to this repository.
-
-### Standalone
-
-Run the server directly:
-```bash
-npm start
-```
-
-Or in development mode:
-```bash
-npm run dev
-```
-
-## Web UI Dashboard
-
-Basher includes an integrated web dashboard for viewing logs, browsing command history, and monitoring execution statistics in real-time.
-
-### Accessing the Dashboard
-
-When the MCP server starts, the web UI automatically launches on **http://localhost:3000**
-
-### VS Code Extension
-
-A fully integrated VS Code extension that brings Basher directly into your editor with native VS Code UI components.
-
-**Features:**
-- **Left Sidebar Panel**: Terminal icon in the activity bar with command history and statistics
-- **Tree View**: Scrollable list of all commands with color-coded status indicators
-- **Editor Integration**: Click any command to open its output in an editor pane
-- **Multi-pane Support**: View multiple command outputs side-by-side
-- **Real-time Updates**: SSE integration for live updates when commands execute
-- **Quick Actions**: Inline buttons to rerun commands or view outputs
-- **Search**: Full-text search across all command history
-- **Configurable**: Auto-refresh interval, max history items, server URL
-
-**Installation:**
-
-1. Build the extension:
-   ```bash
-   cd vscode-extension
-   npm install
-   npm run compile
-   npm run package
-   ```
-
-2. Install the `.vsix` file in VS Code:
-   - Open VS Code
-   - Press `Cmd+Shift+P` (Mac) or `Ctrl+Shift+P` (Windows/Linux)
-   - Type "Extensions: Install from VSIX"
-   - Select `vscode-extension/basher-vscode-1.0.0.vsix`
-
-3. Use the extension:
-   - Click the **terminal icon** in the left activity bar
-   - Browse command history in the sidebar
-   - Click any command to open its output in an editor pane
-   - Use toolbar buttons to refresh, search, or open the web dashboard
-
-See `vscode-extension/README.md` for detailed documentation.
-
-You can customize the port using the `WEB_PORT` environment variable:
-
-```json
-{
-  "mcpServers": {
-    "basher": {
-      "command": "node",
-      "args": ["/path/to/basher/dist/index.js"],
+      "command": "npx",
+      "args": ["-y", "github:Bazilikum/basher"],
       "env": {
         "LOG_LEVEL": "info",
         "WEB_PORT": "3000"
@@ -135,27 +81,207 @@ You can customize the port using the `WEB_PORT` environment variable:
 }
 ```
 
-### Features
+Commit this file to version control, and your team automatically gets Basher configured when they open the project.
 
-- **Real-time Updates**: Live command execution updates via Server-Sent Events (SSE)
-- **Command History**: Browse all executed commands with exit codes, duration, and timestamps
+## Quick Start
+
+### 1. Install VS Code Extension (Optional)
+
+The Basher VS Code extension provides a native sidebar panel to browse command history without leaving your editor.
+
+#### Installation
+
+1. Download the latest `.vsix` from [GitHub Releases](https://github.com/Bazilikum/basher/releases)
+2. In VS Code: `Cmd+Shift+P` → **"Extensions: Install from VSIX..."**
+3. Select the downloaded `basher-vscode-x.x.x.vsix` file
+
+#### Features
+
+- **Sidebar Panel**: Click the terminal icon in the activity bar
+- **Command Tree View**: Browse all executed commands with status indicators
+- **Output Preview**: Click any command to view its full output in an editor pane
+- **Real-time Updates**: Live updates when commands execute via SSE
+- **Quick Actions**: Rerun commands or view details with inline buttons
+- **Search**: Full-text search across command history
+- **Multi-pane**: Open multiple command outputs side-by-side
+
+#### Configuration
+
+Set these in VS Code settings (`Cmd+,`):
+
+```json
+{
+  "basher.serverUrl": "http://localhost:3000",
+  "basher.autoRefresh": true,
+  "basher.refreshInterval": 5000,
+  "basher.maxHistoryItems": 100
+}
+```
+
+### 2. Access the Web UI Dashboard
+
+Basher automatically starts a web dashboard when the MCP server runs:
+
+**URL**: http://localhost:3000 (default, configurable via `WEB_PORT`)
+
+#### Dashboard Features
+
+- **Real-time Command Feed**: Live updates as commands execute
+- **Command History Table**: Sortable, filterable list of all executions
 - **Full-Text Search**: Search across commands, stdout, and stderr
-- **Execution Logs**: View structured JSON logs with filtering
-- **Statistics Dashboard**: See total commands, failure rates, success rates, and average duration
-- **Dark Theme**: GitHub-inspired dark UI optimized for terminals
+- **Statistics Panel**: Total commands, success/failure rates, average duration
+- **Execution Details**: Click any command to see complete output with timestamps
+- **Dark Theme**: Terminal-inspired UI optimized for developers
+- **Export**: Download command history as JSON or CSV
 
-### API Endpoints
+#### API Endpoints
 
-The web server exposes the following REST API endpoints:
+The web server also provides a REST API:
 
-- `GET /` - Web dashboard (HTML interface)
-- `GET /api/history?limit=100` - Get recent command history
-- `GET /api/search?q=query&limit=50` - Full-text search commands
-- `GET /api/stats` - Get execution statistics
-- `GET /api/logs?limit=100` - Get recent logs
-- `GET /api/events` - Server-Sent Events for real-time updates
-- `DELETE /api/history` - Clear command history
-- `GET /health` - Health check endpoint
+- `GET /api/history?limit=100` - Recent command history
+- `GET /api/search?q=error` - Full-text search
+- `GET /api/stats` - Execution statistics
+- `GET /api/logs?limit=100` - Structured logs
+- `GET /api/events` - Server-Sent Events stream
+- `DELETE /api/history` - Clear history
+
+**Example**: Check statistics from the command line:
+```bash
+curl http://localhost:3000/api/stats
+```
+
+### 3. Start Using Basher
+
+Once configured, Basher tools are available in your AI coding assistant:
+
+**Example commands to try:**
+
+```
+# Execute a command
+execute_command({ command: "npm test" })
+
+# Get recent command history
+get_recent_commands({ limit: 10 })
+
+# Search for errors
+advanced_search({
+  query: "error",
+  outputLevel: "excerpts",
+  filters: { exitCodes: [1] }
+})
+
+# View last failures
+get_last_failures({ limit: 5 })
+```
+
+See the **Available Tools** section below for complete documentation.
+
+---
+
+## Other MCP Clients
+
+### With Cline (VS Code)
+
+Cline uses VS Code's settings.json for MCP configuration:
+
+1. Open VS Code Settings (`Cmd+,` / `Ctrl+,`)
+2. Search for: **"Cline: MCP Settings"**
+3. Click "Edit in settings.json"
+4. Add Basher configuration:
+
+```json
+{
+  "cline.mcpServers": {
+    "basher": {
+      "command": "npx",
+      "args": ["-y", "github:Bazilikum/basher"],
+      "env": {
+        "LOG_LEVEL": "info",
+        "WEB_PORT": "3000"
+      }
+    }
+  }
+}
+```
+
+### With Cursor IDE
+
+Cursor stores MCP configuration in its own settings:
+
+1. Open Cursor Settings (`Cmd+,` / `Ctrl+,`)
+2. Navigate to: **Features → Model Context Protocol**
+3. Add Basher configuration:
+
+```json
+{
+  "mcpServers": {
+    "basher": {
+      "command": "npx",
+      "args": ["-y", "github:Bazilikum/basher"],
+      "env": {
+        "LOG_LEVEL": "info",
+        "WEB_PORT": "3000"
+      }
+    }
+  }
+}
+```
+
+### With Windsurf IDE
+
+1. Open Windsurf Settings → MCP Servers
+2. Add the same JSON configuration as Cursor above
+
+### With Claude Desktop
+
+Claude Desktop uses a separate configuration file:
+
+**Location:**
+- macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- Windows: `%APPDATA%\Claude\claude_desktop_config.json`
+- Linux: `~/.config/Claude/claude_desktop_config.json`
+
+**Configuration:**
+```json
+{
+  "mcpServers": {
+    "basher": {
+      "command": "npx",
+      "args": ["-y", "github:Bazilikum/basher"],
+      "env": {
+        "LOG_LEVEL": "info",
+        "WEB_PORT": "3000"
+      }
+    }
+  }
+}
+```
+
+Restart Claude Desktop after editing the config file.
+
+### MCP Inspector (Testing)
+
+Test Basher tools interactively with the official MCP inspector:
+
+```bash
+npx @modelcontextprotocol/inspector npx -y github:Bazilikum/basher
+```
+
+Opens at http://localhost:5173 with a web UI to test all MCP tools without needing an AI client.
+
+### Environment Variables
+
+Configure Basher via environment variables in your MCP config:
+
+```json
+{
+  "env": {
+    "LOG_LEVEL": "debug",     // trace, debug, info, warn, error, fatal
+    "WEB_PORT": "3000",        // Web UI port (default: 3000)
+    "DB_PATH": "./custom.db"   // Custom database location (optional)
+  }
+}
+```
 
 ## Available Tools
 

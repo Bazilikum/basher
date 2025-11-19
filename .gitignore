@@ -5,7 +5,7 @@ yarn-debug.log*
 yarn-error.log*
 
 # Build output
-dist/
+# dist/ is committed for npx installation from GitHub
 build/
 
 # Logs

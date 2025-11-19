@@ -1,0 +1,299 @@
+/**
+ * Web server for viewing logs, command history, and statistics
+ * Integrated into the MCP server with real-time updates via SSE
+ */
+import express from 'express';
+import cors from 'cors';
+import { readFileSync, existsSync } from 'fs';
+import { join } from 'path';
+import { executeCommand } from './command-executor.js';
+import { processManager } from './process-manager.js';
+import logger from './logger.config.js';
+export class WebServer {
+    constructor(historyManager, port = 3000) {
+        this.sseClients = [];
+        this.app = express();
+        this.historyManager = historyManager;
+        this.port = port;
+        this.setupMiddleware();
+        this.setupRoutes();
+    }
+    setupMiddleware() {
+        this.app.use(cors());
+        this.app.use(express.json());
+        this.app.use(express.static(join(process.cwd(), 'public')));
+    }
+    setupRoutes() {
+        // Main dashboard
+        this.app.get('/', (req, res) => {
+            const htmlPath = join(process.cwd(), 'public', 'index.html');
+            if (existsSync(htmlPath)) {
+                res.sendFile(htmlPath);
+            }
+            else {
+                res.send(this.getDefaultHTML());
+            }
+        });
+        // API: Get command history
+        this.app.get('/api/history', (req, res) => {
+            try {
+                const limit = parseInt(req.query.limit) || 100;
+                const history = this.historyManager.getRecentHistory(limit);
+                res.json({ success: true, data: history });
+            }
+            catch (error) {
+                logger.error({ error }, 'Failed to fetch history');
+                res.status(500).json({ success: false, error: 'Failed to fetch history' });
+            }
+        });
+        // API: Search command history
+        this.app.get('/api/search', (req, res) => {
+            try {
+                const query = req.query.q;
+                if (!query) {
+                    return res.status(400).json({ success: false, error: 'Query parameter required' });
+                }
+                const limit = parseInt(req.query.limit) || 50;
+                const results = this.historyManager.searchHistory(query, limit);
+                res.json({ success: true, data: results });
+            }
+            catch (error) {
+                logger.error({ error }, 'Failed to search history');
+                res.status(500).json({ success: false, error: 'Failed to search history' });
+            }
+        });
+        // API: Get statistics
+        this.app.get('/api/stats', (req, res) => {
+            try {
+                const stats = this.historyManager.getStats();
+                res.json({ success: true, data: stats });
+            }
+            catch (error) {
+                logger.error({ error }, 'Failed to fetch stats');
+                res.status(500).json({ success: false, error: 'Failed to fetch stats' });
+            }
+        });
+        // API: Get logs
+        this.app.get('/api/logs', (req, res) => {
+            try {
+                const logPath = join(process.cwd(), 'logs', 'command-execution.log');
+                if (!existsSync(logPath)) {
+                    return res.json({ success: true, data: [] });
+                }
+                const limit = parseInt(req.query.limit) || 100;
+                const logContent = readFileSync(logPath, 'utf-8');
+                const lines = logContent.trim().split('\n').slice(-limit);
+                const logs = lines
+                    .map(line => {
+                    try {
+                        return JSON.parse(line);
+                    }
+                    catch {
+                        return null;
+                    }
+                })
+                    .filter(log => log !== null)
+                    .reverse();
+                res.json({ success: true, data: logs });
+            }
+            catch (error) {
+                logger.error({ error }, 'Failed to fetch logs');
+                res.status(500).json({ success: false, error: 'Failed to fetch logs' });
+            }
+        });
+        // API: Clear history
+        this.app.delete('/api/history', (req, res) => {
+            try {
+                // This would require adding a clearHistory method to HistoryManager
+                // For now, just return a message
+                res.json({
+                    success: true,
+                    message: 'History clearing not yet implemented. Restart server to clear in-memory cache.'
+                });
+            }
+            catch (error) {
+                logger.error({ error }, 'Failed to clear history');
+                res.status(500).json({ success: false, error: 'Failed to clear history' });
+            }
+        });
+        // API: Execute command
+        this.app.post('/api/execute', async (req, res) => {
+            try {
+                const { command, cwd, stdin, timeout } = req.body;
+                if (!command) {
+                    return res.status(400).json({ success: false, error: 'Command is required' });
+                }
+                logger.info({ command, cwd, timeout }, 'Executing command via web API');
+                // Execute the command
+                const result = await executeCommand(command, cwd || process.cwd(), stdin, timeout || 300000);
+                // Save to history
+                const historyEntry = {
+                    command,
+                    cwd: cwd || process.cwd(),
+                    timestamp: result.timestamp,
+                    exitCode: result.exitCode,
+                    duration: result.duration,
+                    stdout: result.stdout,
+                    stderr: result.stderr,
+                    processId: result.processId,
+                    status: 'completed',
+                };
+                const id = this.historyManager.saveCommand(historyEntry);
+                // Broadcast to SSE clients
+                this.broadcast('command_executed', { ...historyEntry, id });
+                res.json({
+                    success: true,
+                    data: {
+                        id,
+                        command,
+                        exitCode: result.exitCode,
+                        duration: result.duration,
+                        timestamp: result.timestamp,
+                        stdout: result.stdout,
+                        stderr: result.stderr,
+                    }
+                });
+            }
+            catch (error) {
+                logger.error({ error }, 'Failed to execute command');
+                res.status(500).json({
+                    success: false,
+                    error: error.message || 'Failed to execute command'
+                });
+            }
+        });
+        // API: Terminate/kill a running command
+        this.app.post('/api/terminate/:processId', (req, res) => {
+            try {
+                const processId = parseInt(req.params.processId);
+                if (isNaN(processId)) {
+                    return res.status(400).json({ success: false, error: 'Invalid process ID' });
+                }
+                logger.info({ processId }, 'Terminating command via web API');
+                const success = processManager.kill(processId);
+                if (success) {
+                    // Broadcast termination event
+                    this.broadcast('command_terminated', { processId });
+                    res.json({
+                        success: true,
+                        message: `Process ${processId} terminated`
+                    });
+                }
+                else {
+                    res.status(404).json({
+                        success: false,
+                        error: 'Process not found or already completed'
+                    });
+                }
+            }
+            catch (error) {
+                logger.error({ error }, 'Failed to terminate command');
+                res.status(500).json({
+                    success: false,
+                    error: error.message || 'Failed to terminate command'
+                });
+            }
+        });
+        // API: Get running commands
+        this.app.get('/api/running', (req, res) => {
+            try {
+                const running = processManager.getRunning();
+                res.json({ success: true, data: running });
+            }
+            catch (error) {
+                logger.error({ error }, 'Failed to get running commands');
+                res.status(500).json({ success: false, error: error.message });
+            }
+        });
+        // Server-Sent Events endpoint for real-time updates
+        this.app.get('/api/events', (req, res) => {
+            res.setHeader('Content-Type', 'text/event-stream');
+            res.setHeader('Cache-Control', 'no-cache');
+            res.setHeader('Connection', 'keep-alive');
+            res.flushHeaders();
+            // Add client to list
+            this.sseClients.push(res);
+            logger.info({ clientCount: this.sseClients.length }, 'SSE client connected');
+            // Send initial connection message
+            res.write(`data: ${JSON.stringify({ type: 'connected', timestamp: new Date().toISOString() })}\n\n`);
+            // Remove client on disconnect
+            req.on('close', () => {
+                this.sseClients = this.sseClients.filter(client => client !== res);
+                logger.info({ clientCount: this.sseClients.length }, 'SSE client disconnected');
+            });
+        });
+        // Health check
+        this.app.get('/health', (req, res) => {
+            res.json({ status: 'ok', timestamp: new Date().toISOString() });
+        });
+    }
+    /**
+     * Broadcast an event to all connected SSE clients
+     */
+    broadcast(eventType, data) {
+        const message = JSON.stringify({ type: eventType, data, timestamp: new Date().toISOString() });
+        this.sseClients.forEach(client => {
+            try {
+                client.write(`data: ${message}\n\n`);
+            }
+            catch (error) {
+                logger.error({ error }, 'Failed to send SSE message');
+            }
+        });
+    }
+    /**
+     * Start the web server
+     */
+    start() {
+        return new Promise((resolve) => {
+            this.server = this.app.listen(this.port, () => {
+                logger.info({ port: this.port }, 'Web UI started');
+                console.log(`\n🌐 Web UI available at: http://localhost:${this.port}\n`);
+                resolve();
+            });
+        });
+    }
+    /**
+     * Stop the web server
+     */
+    stop() {
+        return new Promise((resolve) => {
+            if (this.server) {
+                this.server.close(() => {
+                    logger.info('Web server stopped');
+                    resolve();
+                });
+            }
+            else {
+                resolve();
+            }
+        });
+    }
+    /**
+     * Default HTML if public/index.html doesn't exist
+     */
+    getDefaultHTML() {
+        return `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Basher - Dashboard</title>
+</head>
+<body>
+  <h1>Basher Dashboard</h1>
+  <p>Web UI is running, but public/index.html is missing.</p>
+  <p>API endpoints are available at:</p>
+  <ul>
+    <li>/api/history - Command history</li>
+    <li>/api/search?q=query - Search commands</li>
+    <li>/api/stats - Statistics</li>
+    <li>/api/logs - Recent logs</li>
+    <li>/api/events - Real-time updates (SSE)</li>
+  </ul>
+</body>
+</html>
+    `;
+    }
+}
