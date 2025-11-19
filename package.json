@@ -22,6 +22,14 @@
   ],
   "author": "Bazilikum",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Bazilikum/basher.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Bazilikum/basher/issues"
+  },
+  "homepage": "https://github.com/Bazilikum/basher#readme",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.22.0",
     "@toon-format/toon": "^1.0.0",
