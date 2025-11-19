@@ -285,13 +285,13 @@ Configure Basher via environment variables in your MCP config:
 
 ### Running Multiple Instances Simultaneously
 
-When running Basher across multiple projects at the same time, you need to configure unique ports and database paths to avoid conflicts:
+**⚠️ Important**: When running Basher across multiple projects, MCP servers share the same working directory, which means they will use the same database file by default. You **MUST** configure unique ports and database paths for each project.
 
-#### Using Project-Scoped `.mcp.json`
+#### Using Project-Scoped `.mcp.json` (Recommended)
 
-Create `.mcp.json` in each project with unique configuration:
+Create `.mcp.json` in **each project root** with unique configuration:
 
-**Project A:**
+**Project A** (e.g., `/Users/you/project-a/.mcp.json`):
 ```json
 {
   "mcpServers": {
@@ -300,14 +300,14 @@ Create `.mcp.json` in each project with unique configuration:
       "args": ["-y", "github:Bazilikum/basher"],
       "env": {
         "WEB_PORT": "3001",
-        "DB_PATH": "./.basher/history.db"
+        "DB_PATH": "/Users/you/project-a/.basher/history.db"
       }
     }
   }
 }
 ```
 
-**Project B:**
+**Project B** (e.g., `/Users/you/project-b/.mcp.json`):
 ```json
 {
   "mcpServers": {
@@ -316,20 +316,26 @@ Create `.mcp.json` in each project with unique configuration:
       "args": ["-y", "github:Bazilikum/basher"],
       "env": {
         "WEB_PORT": "3002",
-        "DB_PATH": "./.basher/history.db"
+        "DB_PATH": "/Users/you/project-b/.basher/history.db"
       }
     }
   }
 }
 ```
 
+**Critical Configuration Notes:**
+- 🔴 **DB_PATH must be an absolute path** or the database will be shared
+- 🔴 **WEB_PORT must be unique** for each instance to avoid port conflicts
+- ✅ Use project-scoped `.mcp.json` to ensure each project loads its own config
+- ✅ Add `.basher/` to your `.gitignore` to avoid committing database files
+
 This ensures:
 - ✅ Each project has its own isolated command history
 - ✅ Each web dashboard runs on a different port
 - ✅ No conflicts between instances
-- ✅ Database files are stored within each project directory
+- ✅ Commands from different projects don't mix together
 
-**Note**: If `DB_PATH` is not specified, all instances will default to `./data/command-history.db` in their respective working directories.
+**Without Configuration**: All instances share `./data/command-history.db` in the same working directory, causing commands from all projects to appear mixed together.
 
 ## Available Tools
 

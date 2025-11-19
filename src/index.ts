@@ -28,7 +28,16 @@ import { WebServer } from './services/web-server.js';
 import { encodeOutput, type OutputFormat } from './utils/toon-encoder.js';
 
 // Initialize history manager
-const dbPath = process.env.DB_PATH; // Optional custom database path
+// IMPORTANT: When running multiple instances, set DB_PATH environment variable
+// to ensure each project has its own isolated command history
+const dbPath = process.env.DB_PATH;
+if (!dbPath) {
+  logger.warn(
+    'DB_PATH not set - using default database path. ' +
+    'This may cause conflicts when running multiple instances. ' +
+    'Set DB_PATH env variable for project-specific isolation.'
+  );
+}
 const historyManager = new HistoryManager(dbPath);
 
 // Initialize web server (will start in main())
