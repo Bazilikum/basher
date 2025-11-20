@@ -1005,7 +1005,13 @@ async function main() {
     process.on('SIGINT', shutdown);
     process.on('SIGTERM', shutdown);
   } catch (error) {
-    logger.fatal({ error }, 'Failed to start MCP server');
+    logger.fatal({
+      error,
+      message: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+      type: error?.constructor?.name
+    }, 'Failed to start MCP server');
+    console.error('Startup error details:', error);
     process.exit(1);
   }
 }

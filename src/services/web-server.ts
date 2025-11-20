@@ -6,12 +6,17 @@
 import express, { Request, Response } from 'express';
 import cors from 'cors';
 import { readFileSync, existsSync } from 'fs';
-import { join } from 'path';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
 import { createServer } from 'net';
 import type { HistoryManager } from './history-manager.js';
 import { executeCommand } from './command-executor.js';
 import { processManager } from './process-manager.js';
 import logger from './logger.config.js';
+
+// ES module equivalent of __dirname
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 export class WebServer {
   private app: express.Application;
@@ -45,6 +50,8 @@ export class WebServer {
     this.app.get('/', (req: Request, res: Response) => {
       // Look for index.html relative to this module's location
       const htmlPath = join(__dirname, '..', '..', 'public', 'index.html');
+      logger.debug({ __dirname, htmlPath, exists: existsSync(htmlPath) }, 'Checking for index.html');
+
       if (existsSync(htmlPath)) {
         res.sendFile(htmlPath);
       } else {
