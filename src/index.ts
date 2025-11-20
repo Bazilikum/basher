@@ -20,6 +20,9 @@ import {
   McpError,
 } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
+import { join, resolve } from 'path';
+import { mkdirSync, existsSync, writeFileSync } from 'fs';
+import { homedir } from 'os';
 import logger from './services/logger.config.js';
 import { HistoryManager } from './services/history-manager.js';
 import { executeCommand } from './services/command-executor.js';
@@ -27,17 +30,74 @@ import { processManager } from './services/process-manager.js';
 import { WebServer } from './services/web-server.js';
 import { encodeOutput, type OutputFormat } from './utils/toon-encoder.js';
 
-// Initialize history manager
-// IMPORTANT: When running multiple instances, set DB_PATH environment variable
-// to ensure each project has its own isolated command history
-const dbPath = process.env.DB_PATH;
-if (!dbPath) {
+/**
+ * Determine the project directory and database path
+ * Priority order:
+ * 1. --project command-line argument
+ * 2. BASHER_PROJECT_ROOT environment variable
+ * 3. DB_PATH environment variable (legacy, for backward compatibility)
+ * 4. Home directory (fallback)
+ */
+function determineProjectPath(): string | null {
+  // 1. Check for --project argument
+  const argIndex = process.argv.indexOf('--project');
+  if (argIndex !== -1 && process.argv[argIndex + 1]) {
+    return resolve(process.argv[argIndex + 1]);
+  }
+
+  // 2. Check for BASHER_PROJECT_ROOT environment variable
+  if (process.env.BASHER_PROJECT_ROOT) {
+    return resolve(process.env.BASHER_PROJECT_ROOT);
+  }
+
+  // 3. Check for legacy DB_PATH (return null to use DB_PATH directly)
+  if (process.env.DB_PATH) {
+    logger.info('Using legacy DB_PATH configuration');
+    return null; // Will use DB_PATH directly
+  }
+
+  // 4. Fallback to home directory
   logger.warn(
-    'DB_PATH not set - using default database path. ' +
-    'This may cause conflicts when running multiple instances. ' +
-    'Set DB_PATH env variable for project-specific isolation.'
+    'No project directory specified. Using home directory as fallback. ' +
+    'For project-specific isolation, use --project argument or BASHER_PROJECT_ROOT env variable.'
   );
+  return homedir();
 }
+
+function initializeDatabase(): string {
+  // Legacy support: if DB_PATH is explicitly set, use it directly
+  if (process.env.DB_PATH) {
+    return process.env.DB_PATH;
+  }
+
+  const projectPath = determineProjectPath();
+  if (!projectPath) {
+    throw new Error('Unable to determine project path');
+  }
+
+  const basherDir = join(projectPath, '.basher');
+
+  // Create .basher directory if it doesn't exist
+  if (!existsSync(basherDir)) {
+    mkdirSync(basherDir, { recursive: true });
+    logger.info({ basherDir }, 'Created .basher directory');
+
+    // Create .gitignore to exclude database files from version control
+    const gitignorePath = join(basherDir, '.gitignore');
+    if (!existsSync(gitignorePath)) {
+      writeFileSync(gitignorePath, '*.db\n*.db-shm\n*.db-wal\n');
+      logger.info('Created .basher/.gitignore');
+    }
+  }
+
+  const dbPath = join(basherDir, 'history.db');
+  logger.info({ projectPath, dbPath }, 'Database initialized for project');
+
+  return dbPath;
+}
+
+// Initialize history manager with project-specific database
+const dbPath = initializeDatabase();
 const historyManager = new HistoryManager(dbPath);
 
 // Initialize web server (will start in main())

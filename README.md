@@ -24,15 +24,17 @@ MCP server for executing shell commands with enhanced logging, history tracking,
 
 ### Quick Install (Recommended)
 
-Install Basher directly from GitHub using Claude Code:
+Install Basher directly from GitHub using Claude Code with automatic project detection:
 
 ```bash
-claude mcp add --transport stdio basher --env WEB_PORT=3000 --env LOG_LEVEL=info -- npx -y github:Bazilikum/basher
+claude mcp add --transport stdio basher --env WEB_PORT=3000 --env LOG_LEVEL=info -- npx -y github:Bazilikum/basher --project "$(pwd)"
 ```
 
 This command:
 - Downloads and installs Basher automatically from GitHub
 - Configures it as an MCP server in Claude Code
+- Automatically creates a `.basher` folder in your project directory
+- Stores command history isolated per project
 - Sets up the web UI on port 3000
 - No manual cloning or building required
 
@@ -59,7 +61,7 @@ npm run build
 2. **Add to Claude Code:**
 
 ```bash
-claude mcp add --transport stdio basher --env WEB_PORT=3000 --env LOG_LEVEL=info -- node $(pwd)/dist/index.js
+claude mcp add --transport stdio basher --env WEB_PORT=3000 --env LOG_LEVEL=info -- node $(pwd)/dist/index.js --project "$(pwd)"
 ```
 
 ### Share with Your Team
@@ -71,7 +73,7 @@ Create `.mcp.json` in your project root to share the configuration:
   "mcpServers": {
     "basher": {
       "command": "npx",
-      "args": ["-y", "github:Bazilikum/basher"],
+      "args": ["-y", "github:Bazilikum/basher", "--project", "${workspaceFolder}"],
       "env": {
         "LOG_LEVEL": "info",
         "WEB_PORT": "3000"
@@ -81,7 +83,9 @@ Create `.mcp.json` in your project root to share the configuration:
 }
 ```
 
-Commit this file to version control, and your team automatically gets Basher configured when they open the project.
+**Note**: `${workspaceFolder}` will be automatically replaced with the actual project path by Claude Code.
+
+Commit this file to version control, and your team automatically gets Basher configured with project-specific isolation when they open the project.
 
 ## Quick Start
 
@@ -285,57 +289,63 @@ Configure Basher via environment variables in your MCP config:
 
 ### Running Multiple Instances Simultaneously
 
-**⚠️ Important**: When running Basher across multiple projects, MCP servers share the same working directory, which means they will use the same database file by default. You **MUST** configure unique ports and database paths for each project.
+With the `--project` argument, Basher automatically creates isolated `.basher` folders in each project. Simply configure unique web ports for each project:
 
 #### Using Project-Scoped `.mcp.json` (Recommended)
 
-Create `.mcp.json` in **each project root** with unique configuration:
+Create `.mcp.json` in each project root:
 
-**Project A** (e.g., `/Users/you/project-a/.mcp.json`):
+**Project A** (`.mcp.json`):
 ```json
 {
   "mcpServers": {
     "basher": {
       "command": "npx",
-      "args": ["-y", "github:Bazilikum/basher"],
+      "args": ["-y", "github:Bazilikum/basher", "--project", "${workspaceFolder}"],
       "env": {
         "WEB_PORT": "3001",
-        "DB_PATH": "/Users/you/project-a/.basher/history.db"
+        "LOG_LEVEL": "info"
       }
     }
   }
 }
 ```
 
-**Project B** (e.g., `/Users/you/project-b/.mcp.json`):
+**Project B** (`.mcp.json`):
 ```json
 {
   "mcpServers": {
     "basher": {
       "command": "npx",
-      "args": ["-y", "github:Bazilikum/basher"],
+      "args": ["-y", "github:Bazilikum/basher", "--project", "${workspaceFolder}"],
       "env": {
         "WEB_PORT": "3002",
-        "DB_PATH": "/Users/you/project-b/.basher/history.db"
+        "LOG_LEVEL": "info"
       }
     }
   }
 }
 ```
 
-**Critical Configuration Notes:**
-- 🔴 **DB_PATH must be an absolute path** or the database will be shared
-- 🔴 **WEB_PORT must be unique** for each instance to avoid port conflicts
-- ✅ Use project-scoped `.mcp.json` to ensure each project loads its own config
-- ✅ Add `.basher/` to your `.gitignore` to avoid committing database files
+**What Happens Automatically:**
+- ✅ Each project gets its own `.basher/history.db` folder
+- ✅ `.basher/.gitignore` is auto-created to exclude database files
+- ✅ Command history is completely isolated per project
+- ✅ No manual path configuration needed
+- ✅ Just set unique `WEB_PORT` for each project
 
-This ensures:
-- ✅ Each project has its own isolated command history
-- ✅ Each web dashboard runs on a different port
-- ✅ No conflicts between instances
-- ✅ Commands from different projects don't mix together
+**Legacy DB_PATH Support:**
 
-**Without Configuration**: All instances share `./data/command-history.db` in the same working directory, causing commands from all projects to appear mixed together.
+For backward compatibility, you can still use explicit paths:
+
+```json
+{
+  "env": {
+    "DB_PATH": "/absolute/path/to/custom/location/history.db",
+    "WEB_PORT": "3000"
+  }
+}
+```
 
 ## Available Tools
 
