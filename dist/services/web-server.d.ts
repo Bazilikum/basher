@@ -17,9 +17,22 @@ export declare class WebServer {
      */
     broadcast(eventType: string, data: any): void;
     /**
-     * Start the web server
+     * Find first available port starting from given port
+     * Similar to Serena's approach for handling multiple instances
+     */
+    private findFreePort;
+    /**
+     * Check if a port is available
+     */
+    private isPortAvailable;
+    /**
+     * Start the web server with automatic port detection
      */
     start(): Promise<void>;
+    /**
+     * Get the current port the server is running on
+     */
+    getPort(): number;
     /**
      * Stop the web server
      */

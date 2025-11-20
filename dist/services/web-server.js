@@ -6,6 +6,7 @@ import express from 'express';
 import cors from 'cors';
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
+import { createServer } from 'net';
 import { executeCommand } from './command-executor.js';
 import { processManager } from './process-manager.js';
 import logger from './logger.config.js';
@@ -242,9 +243,43 @@ export class WebServer {
         });
     }
     /**
-     * Start the web server
+     * Find first available port starting from given port
+     * Similar to Serena's approach for handling multiple instances
      */
-    start() {
+    async findFreePort(startPort) {
+        for (let port = startPort; port <= 65535; port++) {
+            if (await this.isPortAvailable(port)) {
+                return port;
+            }
+        }
+        throw new Error(`No free ports found starting from ${startPort}`);
+    }
+    /**
+     * Check if a port is available
+     */
+    isPortAvailable(port) {
+        return new Promise((resolve) => {
+            const server = createServer();
+            server.once('error', () => {
+                resolve(false);
+            });
+            server.once('listening', () => {
+                server.close();
+                resolve(true);
+            });
+            server.listen(port, '0.0.0.0');
+        });
+    }
+    /**
+     * Start the web server with automatic port detection
+     */
+    async start() {
+        // Try to find an available port starting from the configured port
+        const availablePort = await this.findFreePort(this.port);
+        if (availablePort !== this.port) {
+            logger.info({ requestedPort: this.port, assignedPort: availablePort }, 'Requested port unavailable, using next available port');
+            this.port = availablePort;
+        }
         return new Promise((resolve) => {
             this.server = this.app.listen(this.port, () => {
                 logger.info({ port: this.port }, 'Web UI started');
@@ -252,6 +287,12 @@ export class WebServer {
                 resolve();
             });
         });
+    }
+    /**
+     * Get the current port the server is running on
+     */
+    getPort() {
+        return this.port;
     }
     /**
      * Stop the web server

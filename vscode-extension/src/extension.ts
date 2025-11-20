@@ -1,5 +1,8 @@
 import * as vscode from 'vscode';
 import * as http from 'http';
+import * as path from 'path';
+import * as fs from 'fs';
+import Database from 'better-sqlite3';
 import { CommandOutputPanel } from './outputPanel';
 
 // Types
@@ -26,29 +29,66 @@ class CommandHistoryProvider implements vscode.TreeDataProvider<CommandTreeItem>
   readonly onDidChangeTreeData: vscode.Event<CommandTreeItem | undefined | null | void> = this._onDidChangeTreeData.event;
 
   private commands: CommandHistoryItem[] = [];
-  private serverUrl: string;
+  private dbPath: string | null = null;
 
   constructor(private context: vscode.ExtensionContext) {
-    const config = vscode.workspace.getConfiguration('commandNConquer');
-    this.serverUrl = config.get<string>('serverUrl') || 'http://localhost:3000';
+    this.findDatabasePath();
+  }
+
+  /**
+   * Find the .basher/history.db file in the workspace
+   */
+  private findDatabasePath(): void {
+    const workspaceFolders = vscode.workspace.workspaceFolders;
+    if (workspaceFolders && workspaceFolders.length > 0) {
+      const basherDir = path.join(workspaceFolders[0].uri.fsPath, '.basher');
+      const dbFile = path.join(basherDir, 'history.db');
+      if (fs.existsSync(dbFile)) {
+        this.dbPath = dbFile;
+      }
+    }
   }
 
   refresh(): void {
+    this.findDatabasePath(); // Re-check in case it was created
     this.loadCommands();
   }
 
   async loadCommands(): Promise<void> {
     try {
+      if (!this.dbPath || !fs.existsSync(this.dbPath)) {
+        this.commands = [];
+        this._onDidChangeTreeData.fire();
+        return;
+      }
+
       const config = vscode.workspace.getConfiguration('commandNConquer');
       const limit = config.get<number>('maxHistoryItems') || 100;
 
-      const response = await this.fetchJson(`${this.serverUrl}/api/history?limit=${limit}`);
-      if (response.success) {
-        this.commands = response.data;
-        this._onDidChangeTreeData.fire();
-      }
+      // Read directly from SQLite database
+      const db = new Database(this.dbPath, { readonly: true });
+      const rows = db.prepare(`
+        SELECT id, command, cwd, timestamp, exit_code, duration, stdout, stderr
+        FROM command_history
+        ORDER BY id DESC
+        LIMIT ?
+      `).all(limit) as any[];
+
+      this.commands = rows.map(row => ({
+        id: row.id,
+        command: row.command,
+        cwd: row.cwd,
+        timestamp: row.timestamp,
+        exitCode: row.exit_code,
+        duration: row.duration,
+        stdout: row.stdout || '',
+        stderr: row.stderr || ''
+      }));
+
+      db.close();
+      this._onDidChangeTreeData.fire();
     } catch (error) {
-      // Silently fail - server might not be running
+      console.error('[Basher] Failed to load commands from database:', error);
       this.commands = [];
       this._onDidChangeTreeData.fire();
     }
@@ -156,26 +196,59 @@ class StatsProvider implements vscode.TreeDataProvider<StatsTreeItem> {
   readonly onDidChangeTreeData: vscode.Event<StatsTreeItem | undefined | null | void> = this._onDidChangeTreeData.event;
 
   private stats: Stats | null = null;
-  private serverUrl: string;
+  private dbPath: string | null = null;
 
   constructor() {
-    const config = vscode.workspace.getConfiguration('commandNConquer');
-    this.serverUrl = config.get<string>('serverUrl') || 'http://localhost:3000';
+    this.findDatabasePath();
+  }
+
+  /**
+   * Find the .basher/history.db file in the workspace
+   */
+  private findDatabasePath(): void {
+    const workspaceFolders = vscode.workspace.workspaceFolders;
+    if (workspaceFolders && workspaceFolders.length > 0) {
+      const basherDir = path.join(workspaceFolders[0].uri.fsPath, '.basher');
+      const dbFile = path.join(basherDir, 'history.db');
+      if (fs.existsSync(dbFile)) {
+        this.dbPath = dbFile;
+      }
+    }
   }
 
   refresh(): void {
+    this.findDatabasePath(); // Re-check in case it was created
     this.loadStats();
   }
 
   async loadStats(): Promise<void> {
     try {
-      const response = await this.fetchJson(`${this.serverUrl}/api/stats`);
-      if (response.success) {
-        this.stats = response.data;
+      if (!this.dbPath || !fs.existsSync(this.dbPath)) {
+        this.stats = null;
         this._onDidChangeTreeData.fire();
+        return;
       }
+
+      // Read stats directly from SQLite database
+      const db = new Database(this.dbPath, { readonly: true });
+      const row = db.prepare(`
+        SELECT
+          COUNT(*) as total,
+          SUM(CASE WHEN exit_code != 0 THEN 1 ELSE 0 END) as failures,
+          AVG(duration) as avg_duration
+        FROM command_history
+      `).get() as any;
+
+      this.stats = {
+        total: row.total || 0,
+        failures: row.failures || 0,
+        avgDuration: Math.round(row.avg_duration || 0)
+      };
+
+      db.close();
+      this._onDidChangeTreeData.fire();
     } catch (error) {
-      // Silently fail - server might not be running
+      console.error('[Basher] Failed to load stats from database:', error);
       this.stats = null;
       this._onDidChangeTreeData.fire();
     }

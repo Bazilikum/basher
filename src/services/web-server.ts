@@ -7,6 +7,7 @@ import express, { Request, Response } from 'express';
 import cors from 'cors';
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
+import { createServer } from 'net';
 import type { HistoryManager } from './history-manager.js';
 import { executeCommand } from './command-executor.js';
 import { processManager } from './process-manager.js';
@@ -274,9 +275,50 @@ export class WebServer {
   }
 
   /**
-   * Start the web server
+   * Find first available port starting from given port
+   * Similar to Serena's approach for handling multiple instances
    */
-  public start(): Promise<void> {
+  private async findFreePort(startPort: number): Promise<number> {
+    for (let port = startPort; port <= 65535; port++) {
+      if (await this.isPortAvailable(port)) {
+        return port;
+      }
+    }
+    throw new Error(`No free ports found starting from ${startPort}`);
+  }
+
+  /**
+   * Check if a port is available
+   */
+  private isPortAvailable(port: number): Promise<boolean> {
+    return new Promise((resolve) => {
+      const server = createServer();
+      server.once('error', () => {
+        resolve(false);
+      });
+      server.once('listening', () => {
+        server.close();
+        resolve(true);
+      });
+      server.listen(port, '0.0.0.0');
+    });
+  }
+
+  /**
+   * Start the web server with automatic port detection
+   */
+  public async start(): Promise<void> {
+    // Try to find an available port starting from the configured port
+    const availablePort = await this.findFreePort(this.port);
+
+    if (availablePort !== this.port) {
+      logger.info(
+        { requestedPort: this.port, assignedPort: availablePort },
+        'Requested port unavailable, using next available port'
+      );
+      this.port = availablePort;
+    }
+
     return new Promise((resolve) => {
       this.server = this.app.listen(this.port, () => {
         logger.info({ port: this.port }, 'Web UI started');
@@ -284,6 +326,13 @@ export class WebServer {
         resolve();
       });
     });
+  }
+
+  /**
+   * Get the current port the server is running on
+   */
+  public getPort(): number {
+    return this.port;
   }
 
   /**
