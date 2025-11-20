@@ -622,9 +622,28 @@ export function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(
     vscode.commands.registerCommand('commandNConquer.openWebDashboard', () => {
-      const config = vscode.workspace.getConfiguration('commandNConquer');
-      const serverUrl = config.get<string>('serverUrl') || 'http://localhost:3000';
+      // Try to read port from .basher/port file
+      const workspaceFolders = vscode.workspace.workspaceFolders;
+      let port = 3000; // default
+
+      if (workspaceFolders && workspaceFolders.length > 0) {
+        const portFile = path.join(workspaceFolders[0].uri.fsPath, '.basher', 'port');
+        try {
+          if (fs.existsSync(portFile)) {
+            const portContent = fs.readFileSync(portFile, 'utf-8').trim();
+            const parsedPort = parseInt(portContent, 10);
+            if (!isNaN(parsedPort)) {
+              port = parsedPort;
+            }
+          }
+        } catch (error) {
+          console.error('[Basher] Failed to read port file:', error);
+        }
+      }
+
+      const serverUrl = `http://localhost:${port}`;
       vscode.env.openExternal(vscode.Uri.parse(serverUrl));
+      vscode.window.showInformationMessage(`Opening Basher Web UI at ${serverUrl}`);
     })
   );
 

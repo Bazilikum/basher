@@ -455,6 +455,33 @@
       color: #c9d1d9;
     }
 
+    .output-content .line {
+      display: flex;
+      gap: 12px;
+      padding: 2px 0;
+    }
+
+    .output-content .timestamp-col {
+      color: #6e7681;
+      font-size: 10px;
+      min-width: 80px;
+      flex-shrink: 0;
+      text-align: right;
+      opacity: 0.7;
+    }
+
+    .output-content .content-col {
+      flex: 1;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    .output-content .output-separator {
+      border-top: 2px solid #30363d;
+      margin: 8px 0;
+      opacity: 0.5;
+    }
+
     .output-content mark {
       background: #9e6a03;
       color: white;
@@ -467,7 +494,7 @@
     }
 
     .output-content.filtered .line.match {
-      display: block;
+      display: flex;
     }
 
     .empty-state {
@@ -904,17 +931,17 @@
 
       if (type === 'stdout') {
         content.classList.add('stdout');
-        content.innerHTML = formatOutput(cmd.stdout || '(no output)', 'stdout');
+        content.innerHTML = formatOutput(cmd.stdout || '(no output)', 'stdout', cmd);
       } else if (type === 'stderr') {
         content.classList.add('stderr');
-        content.innerHTML = formatOutput(cmd.stderr || '(no errors)', 'stderr');
+        content.innerHTML = formatOutput(cmd.stderr || '(no errors)', 'stderr', cmd);
       } else if (type === 'mixed') {
         content.classList.add('mixed');
-        content.innerHTML = formatMixedOutput(cmd.stdout, cmd.stderr);
+        content.innerHTML = formatMixedOutput(cmd.stdout, cmd.stderr, cmd);
       } else {
         // Info tab
         const infoText = `Command: ${cmd.command}\nCWD: ${cmd.cwd}\nExit Code: ${cmd.exitCode}\nDuration: ${cmd.duration}ms\nTimestamp: ${new Date(cmd.timestamp).toLocaleString()}`;
-        content.innerHTML = formatOutput(infoText, 'info');
+        content.innerHTML = formatOutput(infoText, 'info', cmd);
       }
 
       // Reapply any active filters
@@ -924,35 +951,79 @@
       }
     }
 
-    function formatOutput(text, type) {
-      if (!text) return '<div class="line">(empty)</div>';
+    function formatOutput(text, type, cmd = null) {
+      if (!text) return '<div class="line"><span class="timestamp-col"></span><span class="content-col">(empty)</span></div>';
 
+      const commandStartTime = cmd ? new Date(cmd.timestamp).getTime() : null;
       const lines = text.split('\n');
-      return lines.map((line, idx) =>
-        `<div class="line line-${type}" data-line="${idx}">${escapeHtml(line)}</div>`
-      ).join('');
+
+      const formattedLines = lines.map((line, idx) => {
+        // Try to extract timestamp from line like [2025-11-20T12:53:42.698Z]
+        const timestampMatch = line.match(/^\[(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)\]/);
+
+        if (timestampMatch && commandStartTime) {
+          const lineTime = new Date(timestampMatch[1]).getTime();
+          const elapsed = lineTime - commandStartTime;
+          const elapsedSec = (elapsed / 1000).toFixed(3);
+          const cleanLine = line.substring(timestampMatch[0].length).trimStart();
+
+          return `<div class="line line-${type}" data-line="${idx}">` +
+            `<span class="timestamp-col">+${elapsedSec}s</span>` +
+            `<span class="content-col">${escapeHtml(cleanLine)}</span>` +
+            `</div>`;
+        } else {
+          return `<div class="line line-${type}" data-line="${idx}">` +
+            `<span class="timestamp-col"></span>` +
+            `<span class="content-col">${escapeHtml(line)}</span>` +
+            `</div>`;
+        }
+      }).join('');
+
+      return '<div class="output-separator"></div>' + formattedLines;
     }
 
-    function formatMixedOutput(stdout, stderr) {
-      if (!stdout && !stderr) return '<div class="line">(no output)</div>';
+    function formatMixedOutput(stdout, stderr, cmd = null) {
+      if (!stdout && !stderr) return '<div class="line"><span class="timestamp-col"></span><span class="content-col">(no output)</span></div>';
 
-      let output = '';
+      const commandStartTime = cmd ? new Date(cmd.timestamp).getTime() : null;
+      let output = '<div class="output-separator"></div>';
+
+      const formatLine = (line, type, idx) => {
+        const timestampMatch = line.match(/^\[(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)\]/);
+
+        if (timestampMatch && commandStartTime) {
+          const lineTime = new Date(timestampMatch[1]).getTime();
+          const elapsed = lineTime - commandStartTime;
+          const elapsedSec = (elapsed / 1000).toFixed(3);
+          const cleanLine = line.substring(timestampMatch[0].length).trimStart();
+
+          return `<div class="line line-${type}" data-line="${type}-${idx}">` +
+            `<span class="timestamp-col">+${elapsedSec}s</span>` +
+            `<span class="content-col">${escapeHtml(cleanLine)}</span>` +
+            `</div>`;
+        } else {
+          return `<div class="line line-${type}" data-line="${type}-${idx}">` +
+            `<span class="timestamp-col"></span>` +
+            `<span class="content-col">${escapeHtml(line)}</span>` +
+            `</div>`;
+        }
+      };
 
       if (stdout) {
         const stdoutLines = stdout.split('\n');
         stdoutLines.forEach((line, idx) => {
-          output += `<div class="line line-stdout" data-line="out-${idx}">${escapeHtml(line)}</div>`;
+          output += formatLine(line, 'stdout', idx);
         });
       }
 
       if (stderr) {
         const stderrLines = stderr.split('\n');
         stderrLines.forEach((line, idx) => {
-          output += `<div class="line line-stderr" data-line="err-${idx}">${escapeHtml(line)}</div>`;
+          output += formatLine(line, 'stderr', idx);
         });
       }
 
-      return output || '<div class="line">(no output)</div>';
+      return output || '<div class="line"><span class="timestamp-col"></span><span class="content-col">(no output)</span></div>';
     }
 
     function searchInOutput(cmdId, query) {
@@ -1097,11 +1168,11 @@
       // Re-render current tab
       const tabText = activeTab.textContent.trim().toUpperCase();
       if (tabText.includes('STDOUT')) {
-        content.innerHTML = formatOutput(cmd.stdout || '(no output)', 'stdout');
+        content.innerHTML = formatOutput(cmd.stdout || '(no output)', 'stdout', cmd);
       } else if (tabText.includes('STDERR')) {
-        content.innerHTML = formatOutput(cmd.stderr || '(no errors)', 'stderr');
+        content.innerHTML = formatOutput(cmd.stderr || '(no errors)', 'stderr', cmd);
       } else if (tabText.includes('MIXED')) {
-        content.innerHTML = formatMixedOutput(cmd.stdout, cmd.stderr);
+        content.innerHTML = formatMixedOutput(cmd.stdout, cmd.stderr, cmd);
       }
 
       // Reapply filters/search if active

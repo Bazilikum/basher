@@ -82,10 +82,10 @@ function initializeDatabase(): string {
     mkdirSync(basherDir, { recursive: true });
     logger.info({ basherDir }, 'Created .basher directory');
 
-    // Create .gitignore to exclude database files from version control
+    // Create .gitignore to exclude database files and runtime files from version control
     const gitignorePath = join(basherDir, '.gitignore');
     if (!existsSync(gitignorePath)) {
-      writeFileSync(gitignorePath, '*.db\n*.db-shm\n*.db-wal\n');
+      writeFileSync(gitignorePath, '*.db\n*.db-shm\n*.db-wal\nport\n');
       logger.info('Created .basher/.gitignore');
     }
   }

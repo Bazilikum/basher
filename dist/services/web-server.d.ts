@@ -30,6 +30,10 @@ export declare class WebServer {
      */
     start(): Promise<void>;
     /**
+     * Write the current port to a file for the VS Code extension
+     */
+    private writePortFile;
+    /**
      * Get the current port the server is running on
      */
     getPort(): number;

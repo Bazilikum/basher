@@ -284,9 +284,46 @@ export class WebServer {
             this.server = this.app.listen(this.port, () => {
                 logger.info({ port: this.port }, 'Web UI started');
                 console.log(`\n🌐 Web UI available at: http://localhost:${this.port}\n`);
+                // Write port number to file for VS Code extension to read
+                this.writePortFile();
                 resolve();
             });
         });
+    }
+    /**
+     * Write the current port to a file for the VS Code extension
+     */
+    writePortFile() {
+        try {
+            const { join } = require('path');
+            const { writeFileSync, existsSync, mkdirSync } = require('fs');
+            // Determine the project directory (same logic as index.ts)
+            let projectPath = process.cwd();
+            const argIndex = process.argv.indexOf('--project');
+            if (argIndex !== -1 && process.argv[argIndex + 1]) {
+                const { resolve } = require('path');
+                projectPath = resolve(process.argv[argIndex + 1]);
+            }
+            else if (process.env.BASHER_PROJECT_ROOT) {
+                const { resolve } = require('path');
+                projectPath = resolve(process.env.BASHER_PROJECT_ROOT);
+            }
+            else if (process.env.DB_PATH) {
+                // For legacy DB_PATH, use the directory containing the database
+                const { dirname } = require('path');
+                projectPath = dirname(process.env.DB_PATH);
+            }
+            const basherDir = join(projectPath, '.basher');
+            if (!existsSync(basherDir)) {
+                mkdirSync(basherDir, { recursive: true });
+            }
+            const portFile = join(basherDir, 'port');
+            writeFileSync(portFile, this.port.toString(), 'utf-8');
+            logger.info({ portFile, port: this.port }, 'Wrote port file for VS Code extension');
+        }
+        catch (error) {
+            logger.error({ error }, 'Failed to write port file');
+        }
     }
     /**
      * Get the current port the server is running on
