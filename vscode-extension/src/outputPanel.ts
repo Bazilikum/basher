@@ -188,22 +188,69 @@ export class CommandOutputPanel {
 
     const formatOutput = (output: string, type: 'stdout' | 'stderr'): string => {
       if (!output) return '';
-      return output.split('\n').map((line, idx) => {
-        const className = type === 'stderr' ? 'line-stderr' : 'line-stdout';
-        return `<div class="line ${className}" data-line="${type}-${idx}">${escapeHtml(line)}</div>`;
+
+      const commandStartTime = new Date(command.timestamp).getTime();
+      const className = type === 'stderr' ? 'line-stderr' : 'line-stdout';
+
+      const lines = output.split('\n').map((line, idx) => {
+        // Try to extract timestamp from line like [2025-11-20T12:53:42.698Z]
+        const timestampMatch = line.match(/^\[(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)\]/);
+
+        if (timestampMatch) {
+          const lineTime = new Date(timestampMatch[1]).getTime();
+          const elapsed = lineTime - commandStartTime;
+          const elapsedSec = (elapsed / 1000).toFixed(3);
+          const cleanLine = line.substring(timestampMatch[0].length).trimStart();
+
+          return `<div class="line ${className}" data-line="${type}-${idx}">` +
+            `<span class="timestamp-col">+${elapsedSec}s</span>` +
+            `<span class="content-col">${escapeHtml(cleanLine)}</span>` +
+            `</div>`;
+        } else {
+          return `<div class="line ${className}" data-line="${type}-${idx}">` +
+            `<span class="timestamp-col"></span>` +
+            `<span class="content-col">${escapeHtml(line)}</span>` +
+            `</div>`;
+        }
       }).join('');
+
+      return `<div class="output-separator"></div>${lines}`;
     };
 
     const formatMixedOutput = (stdout: string, stderr: string): string => {
-      let output = '';
+      const commandStartTime = new Date(command.timestamp).getTime();
+      let output = '<div class="output-separator"></div>';
+
+      const formatLine = (line: string, type: 'stdout' | 'stderr', idx: number): string => {
+        const className = type === 'stderr' ? 'line-stderr' : 'line-stdout';
+        const timestampMatch = line.match(/^\[(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)\]/);
+
+        if (timestampMatch) {
+          const lineTime = new Date(timestampMatch[1]).getTime();
+          const elapsed = lineTime - commandStartTime;
+          const elapsedSec = (elapsed / 1000).toFixed(3);
+          const cleanLine = line.substring(timestampMatch[0].length).trimStart();
+
+          return `<div class="line ${className}" data-line="${type}-${idx}">` +
+            `<span class="timestamp-col">+${elapsedSec}s</span>` +
+            `<span class="content-col">${escapeHtml(cleanLine)}</span>` +
+            `</div>`;
+        } else {
+          return `<div class="line ${className}" data-line="${type}-${idx}">` +
+            `<span class="timestamp-col"></span>` +
+            `<span class="content-col">${escapeHtml(line)}</span>` +
+            `</div>`;
+        }
+      };
+
       if (stdout) {
         stdout.split('\n').forEach((line, idx) => {
-          output += `<div class="line line-stdout" data-line="out-${idx}">${escapeHtml(line)}</div>`;
+          output += formatLine(line, 'stdout', idx);
         });
       }
       if (stderr) {
         stderr.split('\n').forEach((line, idx) => {
-          output += `<div class="line line-stderr" data-line="err-${idx}">${escapeHtml(line)}</div>`;
+          output += formatLine(line, 'stderr', idx);
         });
       }
       return output;
@@ -352,11 +399,27 @@ export class CommandOutputPanel {
         }
         .line {
             padding: 2px 0;
+            display: flex;
+            gap: 12px;
         }
-        .line-stderr {
+        .timestamp-col {
+            color: var(--vscode-descriptionForeground);
+            font-size: 11px;
+            min-width: 80px;
+            flex-shrink: 0;
+            text-align: right;
+            font-family: var(--vscode-editor-font-family);
+            opacity: 0.7;
+        }
+        .content-col {
+            flex: 1;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        .line-stderr .content-col {
             color: var(--vscode-errorForeground);
         }
-        .line-stdout {
+        .line-stdout .content-col {
             color: var(--vscode-foreground);
         }
         .line.hidden {
@@ -364,6 +427,11 @@ export class CommandOutputPanel {
         }
         .line.highlight {
             background: var(--vscode-editor-findMatchHighlightBackground);
+        }
+        .output-separator {
+            border-top: 2px solid var(--vscode-panel-border);
+            margin: 12px 0;
+            opacity: 0.5;
         }
         .empty-message {
             color: var(--vscode-descriptionForeground);

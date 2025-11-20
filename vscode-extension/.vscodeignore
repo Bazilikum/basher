@@ -7,3 +7,4 @@ tsconfig.json
 **/*.ts
 !dist/**/*.d.ts
 node_modules/**
+!node_modules/sql.js/**

@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as http from 'http';
 import * as path from 'path';
 import * as fs from 'fs';
-import Database from 'better-sqlite3';
+import initSqlJs, { Database } from 'sql.js';
 import { CommandOutputPanel } from './outputPanel';
 
 // Types
@@ -30,6 +30,7 @@ class CommandHistoryProvider implements vscode.TreeDataProvider<CommandTreeItem>
 
   private commands: CommandHistoryItem[] = [];
   private dbPath: string | null = null;
+  private lastError: string | null = null;
 
   constructor(private context: vscode.ExtensionContext) {
     this.findDatabasePath();
@@ -56,8 +57,11 @@ class CommandHistoryProvider implements vscode.TreeDataProvider<CommandTreeItem>
 
   async loadCommands(): Promise<void> {
     try {
+      this.lastError = null; // Clear previous errors
+
       if (!this.dbPath || !fs.existsSync(this.dbPath)) {
         this.commands = [];
+        this.lastError = !this.dbPath ? 'No workspace folder found' : 'Database file not found';
         this._onDidChangeTreeData.fire();
         return;
       }
@@ -65,30 +69,39 @@ class CommandHistoryProvider implements vscode.TreeDataProvider<CommandTreeItem>
       const config = vscode.workspace.getConfiguration('commandNConquer');
       const limit = config.get<number>('maxHistoryItems') || 100;
 
-      // Read directly from SQLite database
-      const db = new Database(this.dbPath, { readonly: true });
-      const rows = db.prepare(`
+      // Read directly from SQLite database using sql.js
+      const SQL = await initSqlJs();
+      const fileBuffer = fs.readFileSync(this.dbPath);
+      const db = new SQL.Database(fileBuffer);
+
+      const result = db.exec(`
         SELECT id, command, cwd, timestamp, exit_code, duration, stdout, stderr
         FROM command_history
         ORDER BY id DESC
-        LIMIT ?
-      `).all(limit) as any[];
+        LIMIT ${limit}
+      `);
 
-      this.commands = rows.map(row => ({
-        id: row.id,
-        command: row.command,
-        cwd: row.cwd,
-        timestamp: row.timestamp,
-        exitCode: row.exit_code,
-        duration: row.duration,
-        stdout: row.stdout || '',
-        stderr: row.stderr || ''
-      }));
+      if (result.length > 0 && result[0].values.length > 0) {
+        this.commands = result[0].values.map((row: any[]) => ({
+          id: row[0] as number,
+          command: row[1] as string,
+          cwd: row[2] as string,
+          timestamp: row[3] as string,
+          exitCode: row[4] as number,
+          duration: row[5] as number,
+          stdout: (row[6] as string) || '',
+          stderr: (row[7] as string) || ''
+        }));
+      } else {
+        this.commands = [];
+      }
 
       db.close();
       this._onDidChangeTreeData.fire();
     } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
       console.error('[Basher] Failed to load commands from database:', error);
+      this.lastError = `Error loading database: ${errorMsg}`;
       this.commands = [];
       this._onDidChangeTreeData.fire();
     }
@@ -103,13 +116,25 @@ class CommandHistoryProvider implements vscode.TreeDataProvider<CommandTreeItem>
       return Promise.resolve([]);
     }
 
+    if (this.lastError) {
+      // Show error message
+      const errorItem = new vscode.TreeItem(
+        this.lastError,
+        vscode.TreeItemCollapsibleState.None
+      );
+      errorItem.iconPath = new vscode.ThemeIcon('error');
+      errorItem.contextValue = 'error';
+      errorItem.tooltip = `Database path: ${this.dbPath || 'Not found'}`;
+      return Promise.resolve([errorItem as any]);
+    }
+
     if (this.commands.length === 0) {
       // Show a placeholder when no commands are available
       const placeholder = new vscode.TreeItem(
         'No commands found',
         vscode.TreeItemCollapsibleState.None
       );
-      placeholder.description = 'Make sure the MCP server is running';
+      placeholder.description = 'Execute commands via MCP';
       placeholder.iconPath = new vscode.ThemeIcon('info');
       placeholder.contextValue = 'placeholder';
       return Promise.resolve([placeholder as any]);
@@ -197,6 +222,7 @@ class StatsProvider implements vscode.TreeDataProvider<StatsTreeItem> {
 
   private stats: Stats | null = null;
   private dbPath: string | null = null;
+  private lastError: string | null = null;
 
   constructor() {
     this.findDatabasePath();
@@ -223,32 +249,49 @@ class StatsProvider implements vscode.TreeDataProvider<StatsTreeItem> {
 
   async loadStats(): Promise<void> {
     try {
+      this.lastError = null; // Clear previous errors
+
       if (!this.dbPath || !fs.existsSync(this.dbPath)) {
         this.stats = null;
+        this.lastError = !this.dbPath ? 'No workspace folder found' : 'Database file not found';
         this._onDidChangeTreeData.fire();
         return;
       }
 
-      // Read stats directly from SQLite database
-      const db = new Database(this.dbPath, { readonly: true });
-      const row = db.prepare(`
+      // Read stats directly from SQLite database using sql.js
+      const SQL = await initSqlJs();
+      const fileBuffer = fs.readFileSync(this.dbPath);
+      const db = new SQL.Database(fileBuffer);
+
+      const result = db.exec(`
         SELECT
           COUNT(*) as total,
           SUM(CASE WHEN exit_code != 0 THEN 1 ELSE 0 END) as failures,
           AVG(duration) as avg_duration
         FROM command_history
-      `).get() as any;
+      `);
 
-      this.stats = {
-        total: row.total || 0,
-        failures: row.failures || 0,
-        avgDuration: Math.round(row.avg_duration || 0)
-      };
+      if (result.length > 0 && result[0].values.length > 0) {
+        const row = result[0].values[0];
+        this.stats = {
+          total: (row[0] as number) || 0,
+          failures: (row[1] as number) || 0,
+          avgDuration: Math.round((row[2] as number) || 0)
+        };
+      } else {
+        this.stats = {
+          total: 0,
+          failures: 0,
+          avgDuration: 0
+        };
+      }
 
       db.close();
       this._onDidChangeTreeData.fire();
     } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
       console.error('[Basher] Failed to load stats from database:', error);
+      this.lastError = `Error loading database: ${errorMsg}`;
       this.stats = null;
       this._onDidChangeTreeData.fire();
     }
@@ -263,9 +306,15 @@ class StatsProvider implements vscode.TreeDataProvider<StatsTreeItem> {
       return Promise.resolve([]);
     }
 
+    if (this.lastError) {
+      // Show error message
+      const errorItem = new StatsTreeItem(this.lastError, '', 'error');
+      return Promise.resolve([errorItem]);
+    }
+
     if (!this.stats) {
-      // Show placeholder when server is not connected
-      const placeholder = new StatsTreeItem('Not Connected', 'Server not running', 'warning');
+      // Show placeholder when no data
+      const placeholder = new StatsTreeItem('No data available', 'Execute commands via MCP', 'info');
       return Promise.resolve([placeholder]);
     }
 
