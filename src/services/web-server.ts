@@ -32,13 +32,19 @@ export class WebServer {
   private setupMiddleware(): void {
     this.app.use(cors());
     this.app.use(express.json());
-    this.app.use(express.static(join(process.cwd(), 'public')));
+
+    // Serve static files from the public directory relative to this module
+    // __dirname in CommonJS after compilation points to dist/services/
+    // So we need to go up two levels to reach the project root, then into public/
+    const publicPath = join(__dirname, '..', '..', 'public');
+    this.app.use(express.static(publicPath));
   }
 
   private setupRoutes(): void {
     // Main dashboard
     this.app.get('/', (req: Request, res: Response) => {
-      const htmlPath = join(process.cwd(), 'public', 'index.html');
+      // Look for index.html relative to this module's location
+      const htmlPath = join(__dirname, '..', '..', 'public', 'index.html');
       if (existsSync(htmlPath)) {
         res.sendFile(htmlPath);
       } else {
