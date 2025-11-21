@@ -13,8 +13,9 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema, ErrorCode, McpError, } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
-import { join, resolve } from 'path';
-import { mkdirSync, existsSync, writeFileSync } from 'fs';
+import { join, resolve, dirname } from 'path';
+import { mkdirSync, existsSync, writeFileSync, readFileSync } from 'fs';
+import { fileURLToPath } from 'url';
 import { homedir } from 'os';
 import logger from './services/logger.config.js';
 import { HistoryManager } from './services/history-manager.js';
@@ -22,6 +23,9 @@ import { executeCommand } from './services/command-executor.js';
 import { processManager } from './services/process-manager.js';
 import { WebServer } from './services/web-server.js';
 import { encodeOutput } from './utils/toon-encoder.js';
+// Read package.json for version info
+const packageJsonPath = join(dirname(fileURLToPath(import.meta.url)), '..', 'package.json');
+const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf-8'));
 /**
  * Determine the project directory and database path
  * Priority order:
@@ -86,6 +90,8 @@ const executeCommandSchema = z.object({
     cwd: z.string().optional(),
     stdin: z.string().optional(),
     timeout: z.number().positive().optional().default(300000),
+    background: z.boolean().optional().default(true),
+    title: z.string().optional(),
 });
 const searchHistorySchema = z.object({
     query: z.string().min(1, 'Query cannot be empty'),
@@ -130,6 +136,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         timeout: {
                             type: 'number',
                             description: 'Timeout in milliseconds (optional, defaults to 300000ms / 5 minutes)',
+                        },
+                        background: {
+                            type: 'boolean',
+                            description: 'Run command in background and return immediately with processId (optional, defaults to true). Set to false for synchronous execution that waits for completion.',
+                        },
+                        title: {
+                            type: 'string',
+                            description: 'Optional title/label for this command execution (useful for identifying commands in history)',
                         },
                     },
                     required: ['command'],
@@ -178,6 +192,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             {
                 name: 'get_command_stats',
                 description: 'Get statistics about command execution history including total commands, failures, and average execution duration.',
+                inputSchema: {
+                    type: 'object',
+                    properties: {},
+                },
+            },
+            {
+                name: 'get_version',
+                description: 'Get the current version of Basher MCP server including name, version number, and description.',
                 inputSchema: {
                     type: 'object',
                     properties: {},
@@ -398,12 +420,57 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         // Execute command
         if (name === 'execute_command') {
             const params = executeCommandSchema.parse(args);
-            const { command, cwd, stdin, timeout } = params;
-            logger.info({ command, cwd, timeout }, 'Executing command via MCP tool');
-            const result = await executeCommand(command, cwd, stdin, timeout);
+            const { command, cwd, stdin, timeout, background, title } = params;
+            logger.info({ command, cwd, timeout, background, title }, 'Executing command via MCP tool');
+            // If background mode (default), return immediately with processId
+            if (background) {
+                // Execute in background (don't await)
+                executeCommand(command, cwd, stdin, timeout, title).then(result => {
+                    // Save to history when complete
+                    const historyEntry = {
+                        command,
+                        title: title || command,
+                        cwd: cwd || process.cwd(),
+                        timestamp: result.timestamp,
+                        exitCode: result.exitCode,
+                        duration: result.duration,
+                        stdout: result.stdout,
+                        stderr: result.stderr,
+                        processId: result.processId,
+                        status: 'completed',
+                    };
+                    historyManager.saveCommand(historyEntry);
+                    // Broadcast to web UI clients
+                    if (webServer) {
+                        webServer.broadcast('command_executed', historyEntry);
+                    }
+                }).catch(error => {
+                    logger.error({ error, command }, 'Background command failed');
+                });
+                // Return immediately with processId
+                // Note: We need to get the processId before the command completes
+                // The processId is assigned synchronously when the process starts
+                return {
+                    content: [
+                        {
+                            type: 'text',
+                            text: JSON.stringify({
+                                background: true,
+                                message: 'Command started in background. Use get_process_output or get_running_commands to monitor progress.',
+                                command,
+                                cwd: cwd || process.cwd(),
+                                note: 'Process will be tracked and saved to history upon completion. Use get_running_commands to get the processId.',
+                            }, null, 2),
+                        },
+                    ],
+                };
+            }
+            // Synchronous execution (original behavior)
+            const result = await executeCommand(command, cwd, stdin, timeout, title);
             // Save to history
             const historyEntry = {
                 command,
+                title: title || command,
                 cwd: cwd || process.cwd(),
                 timestamp: result.timestamp,
                 exitCode: result.exitCode,
@@ -594,6 +661,22 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                                 ? `${(((stats.total - stats.failures) / stats.total) * 100).toFixed(2)}%`
                                 : 'N/A',
                             averageDuration: `${stats.avgDuration}ms`,
+                        }, null, 2),
+                    },
+                ],
+            };
+        }
+        // Get version
+        if (name === 'get_version') {
+            logger.info('Getting Basher version');
+            return {
+                content: [
+                    {
+                        type: 'text',
+                        text: JSON.stringify({
+                            name: packageJson.name,
+                            version: packageJson.version,
+                            description: packageJson.description,
                         }, null, 2),
                     },
                 ],
@@ -812,8 +895,8 @@ async function main() {
         const transport = new StdioServerTransport();
         await server.connect(transport);
         logger.info({
-            name: 'basher',
-            version: '1.0.0',
+            name: packageJson.name,
+            version: packageJson.version,
             webPort,
         }, 'Basher MCP server started successfully');
         // Graceful shutdown

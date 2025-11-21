@@ -16,6 +16,7 @@ export declare class HistoryManager {
     saveCommand(entry: CommandHistoryEntry & {
         processId?: number;
         status?: string;
+        title?: string;
     }): number;
     /**
      * Update command status (e.g., from 'running' to 'completed')

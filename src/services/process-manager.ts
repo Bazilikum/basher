@@ -8,6 +8,7 @@ import logger from './logger.config.js';
 interface RunningProcess {
   pid: number;
   command: string;
+  title: string;
   startTime: number;
   process: ChildProcess;
   stdout: string;
@@ -21,7 +22,7 @@ class ProcessManager {
   /**
    * Register a new running process
    */
-  register(command: string, process: ChildProcess): number {
+  register(command: string, process: ChildProcess, title?: string): number {
     const processId = ++this.processIdCounter;
 
     if (!process.pid) {
@@ -32,13 +33,14 @@ class ProcessManager {
     this.processes.set(processId, {
       pid: process.pid,
       command,
+      title: title || command,
       startTime: Date.now(),
       process,
       stdout: '',
       stderr: ''
     });
 
-    logger.info({ processId, pid: process.pid, command }, 'Process registered');
+    logger.info({ processId, pid: process.pid, command, title }, 'Process registered');
 
     // Clean up when process exits
     process.on('exit', () => {
@@ -94,12 +96,13 @@ class ProcessManager {
   /**
    * Get all running processes
    */
-  getRunning(): Array<{ id: number; pid: number; command: string; duration: number }> {
+  getRunning(): Array<{ id: number; pid: number; command: string; title: string; duration: number }> {
     const now = Date.now();
     return Array.from(this.processes.entries()).map(([id, proc]) => ({
       id,
       pid: proc.pid,
       command: proc.command,
+      title: proc.title,
       duration: now - proc.startTime
     }));
   }
@@ -144,6 +147,7 @@ class ProcessManager {
   getOutput(processId: number, lines?: number): {
     processId: number;
     command: string;
+    title: string;
     status: 'running' | 'not_found';
     stdout: string;
     stderr: string;
@@ -169,6 +173,7 @@ class ProcessManager {
       return {
         processId,
         command: proc.command,
+        title: proc.title,
         status: 'running',
         stdout,
         stderr,
@@ -180,6 +185,7 @@ class ProcessManager {
     return {
       processId,
       command: proc.command,
+      title: proc.title,
       status: 'running',
       stdout: proc.stdout,
       stderr: proc.stderr,

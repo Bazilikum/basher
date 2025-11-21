@@ -15,15 +15,18 @@ export async function executeCommand(
   command: string,
   cwd?: string,
   stdin?: string,
-  timeout: number = 300000 // 5 minutes default
+  timeout: number = 300000, // 5 minutes default
+  title?: string
 ): Promise<CommandResult & { processId: number }> {
   return new Promise((resolve, reject) => {
     const startTime = Date.now();
     const timestamp = new Date().toISOString();
     const workingDir = cwd || process.cwd();
+    const commandTitle = title || command;
 
     logger.info({
       command,
+      title: commandTitle,
       cwd: workingDir,
       hasStdin: !!stdin,
       timeout,
@@ -55,7 +58,7 @@ export async function executeCommand(
     });
 
     // Register process for tracking and termination
-    const processId = processManager.register(command, child);
+    const processId = processManager.register(command, child, commandTitle);
 
     // Set up timeout
     const timeoutHandle = setTimeout(() => {

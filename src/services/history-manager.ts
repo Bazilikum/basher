@@ -76,10 +76,11 @@ export class HistoryManager {
 
   private migrateDatabase(): void {
     try {
-      // Check if process_id column exists
+      // Check if columns exist
       const columns = this.db.prepare("PRAGMA table_info(command_history)").all() as any[];
       const hasProcessId = columns.some((col: any) => col.name === 'process_id');
       const hasStatus = columns.some((col: any) => col.name === 'status');
+      const hasTitle = columns.some((col: any) => col.name === 'title');
 
       if (!hasProcessId) {
         this.db.exec('ALTER TABLE command_history ADD COLUMN process_id INTEGER');
@@ -91,6 +92,11 @@ export class HistoryManager {
         this.db.exec('CREATE INDEX IF NOT EXISTS idx_status ON command_history(status)');
         logger.info('Added status column to command_history');
       }
+
+      if (!hasTitle) {
+        this.db.exec('ALTER TABLE command_history ADD COLUMN title TEXT');
+        logger.info('Added title column to command_history');
+      }
     } catch (error) {
       logger.error({ error }, 'Failed to migrate database');
     }
@@ -99,15 +105,16 @@ export class HistoryManager {
   /**
    * Save a command execution to history
    */
-  saveCommand(entry: CommandHistoryEntry & { processId?: number; status?: string }): number {
+  saveCommand(entry: CommandHistoryEntry & { processId?: number; status?: string; title?: string }): number {
     try {
       const stmt = this.db.prepare(`
-        INSERT INTO command_history (command, cwd, timestamp, exit_code, duration, stdout, stderr, process_id, status)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO command_history (command, title, cwd, timestamp, exit_code, duration, stdout, stderr, process_id, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
       const result = stmt.run(
         entry.command,
+        entry.title || entry.command,
         entry.cwd,
         entry.timestamp,
         entry.exitCode,
@@ -119,7 +126,7 @@ export class HistoryManager {
       );
 
       const id = result.lastInsertRowid as number;
-      logger.debug({ id, command: entry.command, processId: entry.processId, status: entry.status }, 'Command saved to history');
+      logger.debug({ id, command: entry.command, title: entry.title, processId: entry.processId, status: entry.status }, 'Command saved to history');
       return id;
     } catch (error) {
       logger.error({ error, entry }, 'Failed to save command to history');

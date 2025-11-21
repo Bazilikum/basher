@@ -16,7 +16,9 @@ MCP server for executing shell commands with enhanced logging, history tracking,
 - **Execution Metadata**: Track duration, exit codes, timestamps, working directories, and process IDs
 - **Query Templates**: Pre-optimized queries for common patterns (failures, similar commands, command chains)
 - **Web UI Dashboard**: Real-time dashboard with SSE updates, search, and statistics
-- **VS Code Extension**: Fully integrated sidebar panel with native tree views and editor panes
+- **VS Code Extension**: Fully integrated sidebar panel with live output streaming and custom titles
+- **Background Execution**: Commands run asynchronously by default with instant API responses
+- **Live Output Monitoring**: Watch command output in real-time with per-line timestamps
 - **Timeout Control**: Configurable timeouts for long-running commands
 - **Better Error Tracking**: Detailed error categorization and logging
 
@@ -103,8 +105,11 @@ The Basher VS Code extension provides a native sidebar panel to browse command h
 
 - **Sidebar Panel**: Click the terminal icon in the activity bar
 - **Command Tree View**: Browse all executed commands with status indicators
+- **Live Running Commands**: See commands currently executing with spinning icon (⏳) and real-time duration
+- **Custom Titles**: Commands display with human-readable titles instead of raw shell commands
 - **Output Preview**: Click any command to view its full output in an editor pane
-- **Real-time Updates**: Live updates when commands execute via SSE
+- **Live Output Streaming**: Watch output appear line-by-line as commands execute (updates every 500ms)
+- **Real-time Updates**: Tree view refreshes every 1 second to show new commands
 - **Quick Actions**: Rerun commands or view details with inline buttons
 - **Search**: Full-text search across command history
 - **Multi-pane**: Open multiple command outputs side-by-side
@@ -141,6 +146,89 @@ Basher automatically starts a web dashboard when the MCP server runs:
 #### API Endpoints
 
 The web server also provides a REST API:
+
+##### Command Execution
+
+- `POST /api/execute` - Execute a command (background by default)
+  - **Parameters**:
+    - `command` (required): Shell command to execute
+    - `title` (optional): Human-readable title for the command
+    - `cwd` (optional): Working directory
+    - `background` (optional, default: `true`): Run in background
+    - `timeout` (optional, default: `300000`): Timeout in milliseconds
+
+  **Background Execution (default)**:
+  ```bash
+  curl -X POST http://localhost:3000/api/execute \
+    -H "Content-Type: application/json" \
+    -d '{
+      "command": "npm run build",
+      "title": "Building Project"
+    }'
+  ```
+  Returns immediately with:
+  ```json
+  {
+    "success": true,
+    "background": true,
+    "message": "Command started in background",
+    "command": "npm run build",
+    "title": "Building Project"
+  }
+  ```
+
+  **Synchronous Execution**:
+  ```bash
+  curl -X POST http://localhost:3000/api/execute \
+    -H "Content-Type: application/json" \
+    -d '{
+      "command": "echo hello",
+      "background": false
+    }'
+  ```
+  Waits for completion and returns full output.
+
+##### Process Monitoring
+
+- `GET /api/running` - List currently running commands
+  ```bash
+  curl http://localhost:3000/api/running
+  ```
+  ```json
+  {
+    "success": true,
+    "data": [
+      {
+        "id": 1,
+        "pid": 12345,
+        "command": "npm run build",
+        "title": "Building Project",
+        "duration": 5000
+      }
+    ]
+  }
+  ```
+
+- `GET /api/process/:id/output` - Get live output from running command
+  ```bash
+  curl http://localhost:3000/api/process/1/output
+  ```
+  ```json
+  {
+    "success": true,
+    "data": {
+      "processId": 1,
+      "command": "npm run build",
+      "title": "Building Project",
+      "status": "running",
+      "stdout": "Building...\nCompiling...\n",
+      "stderr": "",
+      "duration": 5000
+    }
+  }
+  ```
+
+##### History & Search
 
 - `GET /api/history?limit=100` - Recent command history
 - `GET /api/search?q=error` - Full-text search

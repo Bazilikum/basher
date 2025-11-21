@@ -8,14 +8,16 @@ import { processManager } from './process-manager.js';
  * Execute a shell command with enhanced logging and timeout support
  * Returns both the command result and the process ID for tracking
  */
-export async function executeCommand(command, cwd, stdin, timeout = 300000 // 5 minutes default
-) {
+export async function executeCommand(command, cwd, stdin, timeout = 300000, // 5 minutes default
+title) {
     return new Promise((resolve, reject) => {
         const startTime = Date.now();
         const timestamp = new Date().toISOString();
         const workingDir = cwd || process.cwd();
+        const commandTitle = title || command;
         logger.info({
             command,
+            title: commandTitle,
             cwd: workingDir,
             hasStdin: !!stdin,
             timeout,
@@ -43,7 +45,7 @@ export async function executeCommand(command, cwd, stdin, timeout = 300000 // 5 
             stdio: ['pipe', 'pipe', 'pipe'],
         });
         // Register process for tracking and termination
-        const processId = processManager.register(command, child);
+        const processId = processManager.register(command, child, commandTitle);
         // Set up timeout
         const timeoutHandle = setTimeout(() => {
             timedOut = true;

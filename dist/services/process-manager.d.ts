@@ -5,6 +5,7 @@ import { ChildProcess } from 'child_process';
 interface RunningProcess {
     pid: number;
     command: string;
+    title: string;
     startTime: number;
     process: ChildProcess;
     stdout: string;
@@ -16,7 +17,7 @@ declare class ProcessManager {
     /**
      * Register a new running process
      */
-    register(command: string, process: ChildProcess): number;
+    register(command: string, process: ChildProcess, title?: string): number;
     /**
      * Unregister a process (called when it exits)
      */
@@ -32,6 +33,7 @@ declare class ProcessManager {
         id: number;
         pid: number;
         command: string;
+        title: string;
         duration: number;
     }>;
     /**
@@ -56,6 +58,7 @@ declare class ProcessManager {
     getOutput(processId: number, lines?: number): {
         processId: number;
         command: string;
+        title: string;
         status: 'running' | 'not_found';
         stdout: string;
         stderr: string;

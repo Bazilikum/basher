@@ -4,13 +4,17 @@
  */
 import express from 'express';
 import cors from 'cors';
-import { readFileSync, existsSync } from 'fs';
-import { join, dirname } from 'path';
+import { readFileSync, existsSync, writeFileSync, mkdirSync, appendFileSync } from 'fs';
+import { join, dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { createServer } from 'net';
+import { homedir, tmpdir } from 'os';
 import { executeCommand } from './command-executor.js';
 import { processManager } from './process-manager.js';
 import logger from './logger.config.js';
+// Read package.json for version info
+const packageJsonPath = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'package.json');
+const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf-8'));
 // ES module equivalent of __dirname
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -44,6 +48,25 @@ export class WebServer {
             else {
                 res.send(this.getDefaultHTML());
             }
+        });
+        // API: Get version
+        this.app.get('/api/version', (req, res) => {
+            res.json({
+                success: true,
+                data: {
+                    name: packageJson.name,
+                    version: packageJson.version,
+                    description: packageJson.description
+                }
+            });
+        });
+        // Health check endpoint
+        this.app.get('/health', (req, res) => {
+            res.json({
+                status: 'ok',
+                version: packageJson.version,
+                timestamp: new Date().toISOString()
+            });
         });
         // API: Get command history
         this.app.get('/api/history', (req, res) => {
@@ -130,16 +153,58 @@ export class WebServer {
         // API: Execute command
         this.app.post('/api/execute', async (req, res) => {
             try {
-                const { command, cwd, stdin, timeout } = req.body;
+                const { command, cwd, stdin, timeout, background = true, title } = req.body;
                 if (!command) {
                     return res.status(400).json({ success: false, error: 'Command is required' });
                 }
-                logger.info({ command, cwd, timeout }, 'Executing command via web API');
-                // Execute the command
-                const result = await executeCommand(command, cwd || process.cwd(), stdin, timeout || 300000);
+                const commandTitle = title || command;
+                logger.info({
+                    command,
+                    title: commandTitle,
+                    cwd,
+                    timeout,
+                    background,
+                    version: 'v2.1-background-default-with-titles',
+                    timestamp: new Date().toISOString()
+                }, 'Executing command via web API - VERSION 2.1 WITH BACKGROUND DEFAULT AND TITLES');
+                // If background mode (default), return immediately with processId
+                if (background) {
+                    // Execute in background (don't await)
+                    executeCommand(command, cwd || process.cwd(), stdin, timeout || 300000, commandTitle).then(result => {
+                        // Save to history when complete
+                        const historyEntry = {
+                            command,
+                            title: commandTitle,
+                            cwd: cwd || process.cwd(),
+                            timestamp: result.timestamp,
+                            exitCode: result.exitCode,
+                            duration: result.duration,
+                            stdout: result.stdout,
+                            stderr: result.stderr,
+                            processId: result.processId,
+                            status: 'completed',
+                        };
+                        const id = this.historyManager.saveCommand(historyEntry);
+                        // Broadcast to SSE clients
+                        this.broadcast('command_executed', { ...historyEntry, id });
+                    }).catch(error => {
+                        logger.error({ error, command }, 'Background command failed');
+                    });
+                    // Return immediately
+                    return res.json({
+                        success: true,
+                        background: true,
+                        message: 'Command started in background',
+                        command,
+                        title: commandTitle
+                    });
+                }
+                // Synchronous execution (original behavior)
+                const result = await executeCommand(command, cwd || process.cwd(), stdin, timeout || 300000, commandTitle);
                 // Save to history
                 const historyEntry = {
                     command,
+                    title: commandTitle,
                     cwd: cwd || process.cwd(),
                     timestamp: result.timestamp,
                     exitCode: result.exitCode,
@@ -157,6 +222,7 @@ export class WebServer {
                     data: {
                         id,
                         command,
+                        title: commandTitle,
                         exitCode: result.exitCode,
                         duration: result.duration,
                         timestamp: result.timestamp,
@@ -213,6 +279,28 @@ export class WebServer {
             }
             catch (error) {
                 logger.error({ error }, 'Failed to get running commands');
+                res.status(500).json({ success: false, error: error.message });
+            }
+        });
+        // API: Get output from a running process
+        this.app.get('/api/process/:processId/output', (req, res) => {
+            try {
+                const processId = parseInt(req.params.processId);
+                if (isNaN(processId)) {
+                    return res.status(400).json({ success: false, error: 'Invalid process ID' });
+                }
+                const lines = req.query.lines ? parseInt(req.query.lines) : undefined;
+                const output = processManager.getOutput(processId, lines);
+                if (!output) {
+                    return res.status(404).json({
+                        success: false,
+                        error: 'Process not found or already completed'
+                    });
+                }
+                res.json({ success: true, data: output });
+            }
+            catch (error) {
+                logger.error({ error }, 'Failed to get process output');
                 res.status(500).json({ success: false, error: error.message });
             }
         });
@@ -304,34 +392,55 @@ export class WebServer {
      * Write the current port to a file for the VS Code extension
      */
     writePortFile() {
+        const debugLog = (msg) => {
+            try {
+                const debugFile = join(tmpdir(), 'basher-port-debug.log');
+                appendFileSync(debugFile, `[${new Date().toISOString()}] ${msg}\n`, 'utf-8');
+            }
+            catch { }
+        };
         try {
-            const { join } = require('path');
-            const { writeFileSync, existsSync, mkdirSync } = require('fs');
-            // Determine the project directory (same logic as index.ts)
-            let projectPath = process.cwd();
+            debugLog('writePortFile() called');
+            // Determine the project directory (MUST match logic in index.ts determineProjectPath)
+            let projectPath;
             const argIndex = process.argv.indexOf('--project');
+            debugLog(`process.argv: ${JSON.stringify(process.argv)}`);
+            debugLog(`--project arg index: ${argIndex}`);
             if (argIndex !== -1 && process.argv[argIndex + 1]) {
-                const { resolve } = require('path');
                 projectPath = resolve(process.argv[argIndex + 1]);
+                debugLog(`Using --project arg: ${projectPath}`);
             }
             else if (process.env.BASHER_PROJECT_ROOT) {
-                const { resolve } = require('path');
                 projectPath = resolve(process.env.BASHER_PROJECT_ROOT);
+                debugLog(`Using BASHER_PROJECT_ROOT: ${projectPath}`);
             }
             else if (process.env.DB_PATH) {
                 // For legacy DB_PATH, use the directory containing the database
-                const { dirname } = require('path');
                 projectPath = dirname(process.env.DB_PATH);
+                debugLog(`Using DB_PATH dirname: ${projectPath}`);
+            }
+            else {
+                // Fallback to home directory (matches index.ts fallback)
+                projectPath = homedir();
+                debugLog(`Using homedir fallback: ${projectPath}`);
+                logger.info('No project path specified, writing port file to home directory');
             }
             const basherDir = join(projectPath, '.basher');
+            debugLog(`basherDir: ${basherDir}, exists: ${existsSync(basherDir)}`);
             if (!existsSync(basherDir)) {
                 mkdirSync(basherDir, { recursive: true });
+                debugLog(`Created basherDir`);
             }
             const portFile = join(basherDir, 'port');
+            debugLog(`Writing port ${this.port} to: ${portFile}`);
             writeFileSync(portFile, this.port.toString(), 'utf-8');
-            logger.info({ portFile, port: this.port }, 'Wrote port file for VS Code extension');
+            debugLog(`✓ Port file written successfully`);
+            console.error(`[Basher] ✓ Port file written: ${portFile} (port: ${this.port})`);
+            logger.info({ projectPath, portFile, port: this.port }, 'Wrote port file for VS Code extension');
         }
         catch (error) {
+            debugLog(`✗ ERROR: ${error}`);
+            console.error(`[Basher] ✗ Failed to write port file:`, error);
             logger.error({ error }, 'Failed to write port file');
         }
     }

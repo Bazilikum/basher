@@ -1,4 +1,6 @@
 import * as vscode from 'vscode';
+import * as path from 'path';
+import * as fs from 'fs';
 
 interface CommandHistoryItem {
   id: number;
@@ -14,16 +16,34 @@ interface CommandHistoryItem {
 export class CommandOutputPanel {
   private static readonly viewType = 'commandNConquer.outputPanel';
   private static panels = new Map<number, CommandOutputPanel>();
+  private static extensionVersion: string = '';
 
   private readonly _panel: vscode.WebviewPanel;
   private readonly _commandId: number;
-  private readonly _commandData: CommandHistoryItem;
+  private _commandData: CommandHistoryItem;
   private _disposables: vscode.Disposable[] = [];
+  private _isRunning: boolean = false;
+  private _pollInterval: NodeJS.Timeout | undefined;
+
+  private static getExtensionVersion(): string {
+    if (CommandOutputPanel.extensionVersion) {
+      return CommandOutputPanel.extensionVersion;
+    }
+    try {
+      const packageJsonPath = path.join(__dirname, '..', 'package.json');
+      const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
+      CommandOutputPanel.extensionVersion = packageJson.version || '1.0.0';
+    } catch (error) {
+      CommandOutputPanel.extensionVersion = '1.0.0';
+    }
+    return CommandOutputPanel.extensionVersion;
+  }
 
   public static createOrShow(
     extensionUri: vscode.Uri,
     commandId: number,
-    commandData: CommandHistoryItem
+    commandData: CommandHistoryItem,
+    isRunning: boolean = false
   ): CommandOutputPanel {
     const column = vscode.window.activeTextEditor
       ? vscode.window.activeTextEditor.viewColumn
@@ -48,7 +68,7 @@ export class CommandOutputPanel {
       }
     );
 
-    const outputPanel = new CommandOutputPanel(panel, extensionUri, commandId, commandData);
+    const outputPanel = new CommandOutputPanel(panel, extensionUri, commandId, commandData, isRunning);
     CommandOutputPanel.panels.set(commandId, outputPanel);
     return outputPanel;
   }
@@ -57,14 +77,21 @@ export class CommandOutputPanel {
     panel: vscode.WebviewPanel,
     extensionUri: vscode.Uri,
     commandId: number,
-    commandData: CommandHistoryItem
+    commandData: CommandHistoryItem,
+    isRunning: boolean = false
   ) {
     this._panel = panel;
     this._commandId = commandId;
     this._commandData = commandData;
+    this._isRunning = isRunning;
 
     // Set the webview's initial html content
     this._update();
+
+    // Start polling for live updates if command is running
+    if (this._isRunning) {
+      this.startPolling();
+    }
 
     // Listen for when the panel is disposed
     // This happens when the user closes the panel or when the panel is closed programmatically
@@ -151,7 +178,72 @@ export class CommandOutputPanel {
     }
   }
 
+  private startPolling(): void {
+    // Poll for updates every 500ms
+    this._pollInterval = setInterval(async () => {
+      try {
+        const http = await import('http');
+        const config = vscode.workspace.getConfiguration('commandNConquer');
+        const serverUrl = config.get<string>('serverUrl') || 'http://localhost:3000';
+
+        // Fetch current output from API
+        const url = new URL(`${serverUrl}/api/process/${this._commandId}/output`);
+
+        await new Promise((resolve, reject) => {
+          http.get(url.toString(), (res) => {
+            let data = '';
+            res.on('data', (chunk) => data += chunk);
+            res.on('end', () => {
+              try {
+                const result = JSON.parse(data);
+                if (result.success && result.data) {
+                  // Update command data with new output
+                  this._commandData.stdout = result.data.stdout || '';
+                  this._commandData.stderr = result.data.stderr || '';
+                  this._commandData.duration = result.data.duration || 0;
+
+                  // Send incremental update to webview instead of regenerating HTML
+                  this._panel.webview.postMessage({
+                    command: 'updateOutput',
+                    stdout: this._commandData.stdout,
+                    stderr: this._commandData.stderr,
+                    duration: this._commandData.duration
+                  });
+
+                  resolve(result);
+                } else if (!result.success) {
+                  // Command completed or not found
+                  this.stopPolling();
+                  // Final update when command completes
+                  this._update();
+                  resolve(result);
+                }
+              } catch (error) {
+                reject(error);
+              }
+            });
+          }).on('error', () => {
+            // Stop polling if server is down
+            this.stopPolling();
+          });
+        });
+      } catch (error) {
+        // Stop polling on error
+        this.stopPolling();
+      }
+    }, 500);
+  }
+
+  private stopPolling(): void {
+    if (this._pollInterval) {
+      clearInterval(this._pollInterval);
+      this._pollInterval = undefined;
+      this._isRunning = false;
+    }
+  }
+
   public dispose() {
+    this.stopPolling();
     CommandOutputPanel.panels.delete(this._commandId);
 
     // Clean up our resources
@@ -172,9 +264,10 @@ export class CommandOutputPanel {
 
   private _getHtmlForWebview(webview: vscode.Webview): string {
     const command = this._commandData;
+    const isRunning = this._isRunning;
     const success = command.exitCode === 0;
-    const statusSymbol = success ? '✓' : '✗';
-    const statusColor = success ? '#4caf50' : '#f44336';
+    const statusSymbol = isRunning ? '⏳' : (success ? '✓' : '✗');
+    const statusColor = isRunning ? '#ff9800' : (success ? '#4caf50' : '#f44336');
     const timestamp = new Date(command.timestamp).toLocaleString();
 
     const escapeHtml = (text: string): string => {
@@ -256,6 +349,8 @@ export class CommandOutputPanel {
       return output;
     };
 
+    const extensionVersion = CommandOutputPanel.getExtensionVersion();
+
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -282,12 +377,25 @@ export class CommandOutputPanel {
             padding: 12px 16px;
             background: var(--vscode-editor-background);
             border-bottom: 1px solid var(--vscode-panel-border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
         }
         .command-info {
             display: flex;
             gap: 16px;
             flex-wrap: wrap;
             font-size: 12px;
+        }
+        .version-badge {
+            font-size: 10px;
+            color: var(--vscode-descriptionForeground);
+            background: var(--vscode-badge-background);
+            color: var(--vscode-badge-foreground);
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-weight: 600;
+            white-space: nowrap;
         }
         .info-item {
             display: flex;
@@ -359,6 +467,28 @@ export class CommandOutputPanel {
         .filter-label {
             font-size: 11px;
             color: var(--vscode-descriptionForeground);
+        }
+        .auto-scroll-section {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .auto-scroll-label {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+            color: var(--vscode-foreground);
+            cursor: pointer;
+            user-select: none;
+        }
+        .auto-scroll-label input[type="checkbox"] {
+            cursor: pointer;
+            width: 16px;
+            height: 16px;
+        }
+        .auto-scroll-label span {
+            white-space: nowrap;
         }
         .rerun-button {
             padding: 6px 12px;
@@ -454,7 +584,7 @@ export class CommandOutputPanel {
             </div>
             <div class="info-item">
                 <span class="info-label">Exit Code:</span>
-                <span class="info-value status">${command.exitCode} ${statusSymbol}</span>
+                <span class="info-value status">${isRunning ? 'Running...' : command.exitCode} ${statusSymbol}</span>
             </div>
             <div class="info-item">
                 <span class="info-label">Duration:</span>
@@ -465,6 +595,7 @@ export class CommandOutputPanel {
                 <span class="info-value">${timestamp}</span>
             </div>
         </div>
+        <div class="version-badge">v${extensionVersion}</div>
     </div>
 
     <div class="toolbar">
@@ -479,6 +610,12 @@ export class CommandOutputPanel {
             <input type="text" class="filter-input" id="searchInput" placeholder="Highlight text...">
             <span class="filter-label">Filter:</span>
             <input type="text" class="filter-input" id="filterInput" placeholder="Regex or text...">
+        </div>
+        <div class="auto-scroll-section">
+            <label class="auto-scroll-label">
+                <input type="checkbox" id="autoScrollCheckbox" checked>
+                <span>Auto-scroll</span>
+            </label>
         </div>
         <button class="rerun-button" id="rerunButton">
             <span>▶</span>
@@ -516,7 +653,16 @@ export class CommandOutputPanel {
         const filterInput = document.getElementById('filterInput');
         const rerunButton = document.getElementById('rerunButton');
         const rerunText = document.getElementById('rerunText');
+        const autoScrollCheckbox = document.getElementById('autoScrollCheckbox');
+        const outputContainer = document.querySelector('.output-container');
         let currentTab = 'stdout';
+
+        // Auto-scroll function
+        function scrollToBottom() {
+            if (autoScrollCheckbox && autoScrollCheckbox.checked && outputContainer) {
+                outputContainer.scrollTop = outputContainer.scrollHeight;
+            }
+        }
 
         // Rerun button
         rerunButton.addEventListener('click', () => {
@@ -539,8 +685,129 @@ export class CommandOutputPanel {
                     rerunButton.classList.remove('running');
                     rerunText.textContent = 'Rerun';
                     break;
+                case 'updateOutput':
+                    // Update output content dynamically without resetting tabs
+                    updateOutputContent(message.stdout, message.stderr, message.duration);
+                    break;
             }
         });
+
+        function updateOutputContent(stdout, stderr, duration) {
+            // Update duration display
+            const durationElements = document.querySelectorAll('.info-value');
+            durationElements.forEach(el => {
+                const parent = el.parentElement;
+                if (parent && parent.querySelector('.info-label')?.textContent === 'Duration:') {
+                    el.textContent = duration + 'ms';
+                }
+            });
+
+            // Helper function to format output
+            const commandStartTime = new Date('${command.timestamp}').getTime();
+
+            const formatOutput = (output, type) => {
+                if (!output) return '<div class="empty-message">No ' + type + ' output</div>';
+
+                const className = type === 'stderr' ? 'line-stderr' : 'line-stdout';
+                const lines = output.split('\\n').map((line, idx) => {
+                    const timestampMatch = line.match(/^\\[(\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z)\\]/);
+
+                    if (timestampMatch) {
+                        const lineTime = new Date(timestampMatch[1]).getTime();
+                        const elapsed = lineTime - commandStartTime;
+                        const elapsedSec = (elapsed / 1000).toFixed(3);
+                        const cleanLine = line.substring(timestampMatch[0].length).trimStart();
+
+                        return '<div class="line ' + className + '" data-line="' + type + '-' + idx + '">' +
+                            '<span class="timestamp-col">+' + elapsedSec + 's</span>' +
+                            '<span class="content-col">' + escapeHtml(cleanLine) + '</span>' +
+                            '</div>';
+                    } else {
+                        return '<div class="line ' + className + '" data-line="' + type + '-' + idx + '">' +
+                            '<span class="timestamp-col"></span>' +
+                            '<span class="content-col">' + escapeHtml(line) + '</span>' +
+                            '</div>';
+                    }
+                }).join('');
+
+                return '<div class="output-separator"></div>' + lines;
+            };
+
+            function escapeHtml(text) {
+                return text
+                    .replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;')
+                    .replace(/"/g, '&quot;')
+                    .replace(/'/g, '&#039;');
+            }
+
+            // Update stdout
+            const stdoutEl = document.getElementById('output-stdout');
+            if (stdoutEl) {
+                stdoutEl.innerHTML = formatOutput(stdout, 'stdout');
+            }
+
+            // Update stderr
+            const stderrEl = document.getElementById('output-stderr');
+            if (stderrEl) {
+                stderrEl.innerHTML = formatOutput(stderr, 'stderr');
+            }
+
+            // Update mixed output
+            const mixedEl = document.getElementById('output-mixed');
+            if (mixedEl) {
+                let mixedOutput = '<div class="output-separator"></div>';
+                if (stdout) {
+                    stdout.split('\\n').forEach((line, idx) => {
+                        const timestampMatch = line.match(/^\\[(\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z)\\]/);
+                        if (timestampMatch) {
+                            const lineTime = new Date(timestampMatch[1]).getTime();
+                            const elapsed = lineTime - commandStartTime;
+                            const elapsedSec = (elapsed / 1000).toFixed(3);
+                            const cleanLine = line.substring(timestampMatch[0].length).trimStart();
+                            mixedOutput += '<div class="line line-stdout" data-line="stdout-' + idx + '">' +
+                                '<span class="timestamp-col">+' + elapsedSec + 's</span>' +
+                                '<span class="content-col">' + escapeHtml(cleanLine) + '</span>' +
+                                '</div>';
+                        } else {
+                            mixedOutput += '<div class="line line-stdout" data-line="stdout-' + idx + '">' +
+                                '<span class="timestamp-col"></span>' +
+                                '<span class="content-col">' + escapeHtml(line) + '</span>' +
+                                '</div>';
+                        }
+                    });
+                }
+                if (stderr) {
+                    stderr.split('\\n').forEach((line, idx) => {
+                        const timestampMatch = line.match(/^\\[(\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z)\\]/);
+                        if (timestampMatch) {
+                            const lineTime = new Date(timestampMatch[1]).getTime();
+                            const elapsed = lineTime - commandStartTime;
+                            const elapsedSec = (elapsed / 1000).toFixed(3);
+                            const cleanLine = line.substring(timestampMatch[0].length).trimStart();
+                            mixedOutput += '<div class="line line-stderr" data-line="stderr-' + idx + '">' +
+                                '<span class="timestamp-col">+' + elapsedSec + 's</span>' +
+                                '<span class="content-col">' + escapeHtml(cleanLine) + '</span>' +
+                                '</div>';
+                        } else {
+                            mixedOutput += '<div class="line line-stderr" data-line="stderr-' + idx + '">' +
+                                '<span class="timestamp-col"></span>' +
+                                '<span class="content-col">' + escapeHtml(line) + '</span>' +
+                                '</div>';
+                        }
+                    });
+                }
+                mixedEl.innerHTML = mixedOutput;
+            }
+
+            // Reapply filters after updating content
+            applySearch();
+            applyFilter();
+
+            // Auto-scroll to bottom if enabled
+            scrollToBottom();
+        }
 
         // Tab switching
         tabs.forEach(tab => {
@@ -623,6 +890,12 @@ export class CommandOutputPanel {
                     line.classList.add('hidden');
                 }
             });
+        }
+
+        // Initial scroll to bottom if running command
+        const isRunningCommand = ${isRunning ? 'true' : 'false'};
+        if (isRunningCommand) {
+            scrollToBottom();
         }
     </script>
 </body>

@@ -15,6 +15,16 @@ interface CommandHistoryItem {
   duration: number;
   stdout: string;
   stderr: string;
+  processId?: number;
+  status?: 'completed' | 'running';
+}
+
+interface RunningProcess {
+  id: number;
+  pid: number;
+  command: string;
+  title: string;
+  duration: number;
 }
 
 interface Stats {
@@ -29,11 +39,14 @@ class CommandHistoryProvider implements vscode.TreeDataProvider<CommandTreeItem>
   readonly onDidChangeTreeData: vscode.Event<CommandTreeItem | undefined | null | void> = this._onDidChangeTreeData.event;
 
   private commands: CommandHistoryItem[] = [];
+  private runningCommands: CommandHistoryItem[] = [];
   private dbPath: string | null = null;
   private lastError: string | null = null;
+  private serverPort: number = 3000;
 
   constructor(private context: vscode.ExtensionContext) {
     this.findDatabasePath();
+    this.findServerPort();
   }
 
   /**
@@ -50,8 +63,52 @@ class CommandHistoryProvider implements vscode.TreeDataProvider<CommandTreeItem>
     }
   }
 
+  /**
+   * Find the server port from .basher/port file
+   */
+  private findServerPort(): void {
+    // Try workspace folder first
+    const workspaceFolders = vscode.workspace.workspaceFolders;
+    if (workspaceFolders && workspaceFolders.length > 0) {
+      const portFile = path.join(workspaceFolders[0].uri.fsPath, '.basher', 'port');
+      try {
+        if (fs.existsSync(portFile)) {
+          const portContent = fs.readFileSync(portFile, 'utf-8').trim();
+          const parsedPort = parseInt(portContent, 10);
+          if (!isNaN(parsedPort)) {
+            this.serverPort = parsedPort;
+            console.log('[Basher] Found workspace-specific port:', parsedPort);
+            return;
+          }
+        }
+      } catch (error) {
+        // Continue to home directory fallback
+      }
+    }
+
+    // Fallback to home directory (for global basher instances)
+    try {
+      const homeDir = require('os').homedir();
+      const portFile = path.join(homeDir, '.basher', 'port');
+      if (fs.existsSync(portFile)) {
+        const portContent = fs.readFileSync(portFile, 'utf-8').trim();
+        const parsedPort = parseInt(portContent, 10);
+        if (!isNaN(parsedPort)) {
+          this.serverPort = parsedPort;
+          console.log('[Basher] Found global port in home directory:', parsedPort);
+          return;
+        }
+      }
+    } catch (error) {
+      // Use default port
+    }
+
+    console.log('[Basher] Using default port:', this.serverPort);
+  }
+
   refresh(): void {
     this.findDatabasePath(); // Re-check in case it was created
+    this.findServerPort(); // Re-check port
     this.loadCommands();
   }
 
@@ -59,9 +116,40 @@ class CommandHistoryProvider implements vscode.TreeDataProvider<CommandTreeItem>
     try {
       this.lastError = null; // Clear previous errors
 
+      // Fetch running commands from web API
+      try {
+        const url = `http://localhost:${this.serverPort}/api/running`;
+        console.log('[Basher] Fetching running commands from:', url);
+        const runningResponse = await this.fetchJson(url);
+        console.log('[Basher] Running commands response:', runningResponse);
+        if (runningResponse.success && runningResponse.data) {
+          console.log('[Basher] Found running commands:', runningResponse.data.length);
+          this.runningCommands = runningResponse.data.map((proc: RunningProcess) => ({
+            id: proc.id,
+            command: proc.title || proc.command,
+            cwd: '',
+            timestamp: new Date(Date.now() - proc.duration).toISOString(),
+            exitCode: -1,
+            duration: proc.duration,
+            stdout: '',
+            stderr: '',
+            processId: proc.id,
+            status: 'running' as const
+          }));
+        } else {
+          this.runningCommands = [];
+        }
+      } catch (error) {
+        // Server might not be running
+        console.error('[Basher] Failed to fetch running commands:', error);
+        this.runningCommands = [];
+      }
+
       if (!this.dbPath || !fs.existsSync(this.dbPath)) {
         this.commands = [];
-        this.lastError = !this.dbPath ? 'No workspace folder found' : 'Database file not found';
+        if (this.runningCommands.length === 0) {
+          this.lastError = !this.dbPath ? 'No workspace folder found' : 'Database file not found';
+        }
         this._onDidChangeTreeData.fire();
         return;
       }
@@ -75,7 +163,7 @@ class CommandHistoryProvider implements vscode.TreeDataProvider<CommandTreeItem>
       const db = new SQL.Database(fileBuffer);
 
       const result = db.exec(`
-        SELECT id, command, cwd, timestamp, exit_code, duration, stdout, stderr
+        SELECT id, command, title, cwd, timestamp, exit_code, duration, stdout, stderr
         FROM command_history
         ORDER BY id DESC
         LIMIT ${limit}
@@ -84,13 +172,14 @@ class CommandHistoryProvider implements vscode.TreeDataProvider<CommandTreeItem>
       if (result.length > 0 && result[0].values.length > 0) {
         this.commands = result[0].values.map((row: any[]) => ({
           id: row[0] as number,
-          command: row[1] as string,
-          cwd: row[2] as string,
-          timestamp: row[3] as string,
-          exitCode: row[4] as number,
-          duration: row[5] as number,
-          stdout: (row[6] as string) || '',
-          stderr: (row[7] as string) || ''
+          command: (row[2] as string) || (row[1] as string), // Use title if available, fallback to command
+          cwd: row[3] as string,
+          timestamp: row[4] as string,
+          exitCode: row[5] as number,
+          duration: row[6] as number,
+          stdout: (row[7] as string) || '',
+          stderr: (row[8] as string) || '',
+          status: 'completed' as const
         }));
       } else {
         this.commands = [];
@@ -116,8 +205,8 @@ class CommandHistoryProvider implements vscode.TreeDataProvider<CommandTreeItem>
       return Promise.resolve([]);
     }
 
-    if (this.lastError) {
-      // Show error message
+    if (this.lastError && this.runningCommands.length === 0) {
+      // Show error message only if no running commands
       const errorItem = new vscode.TreeItem(
         this.lastError,
         vscode.TreeItemCollapsibleState.None
@@ -128,7 +217,7 @@ class CommandHistoryProvider implements vscode.TreeDataProvider<CommandTreeItem>
       return Promise.resolve([errorItem as any]);
     }
 
-    if (this.commands.length === 0) {
+    if (this.commands.length === 0 && this.runningCommands.length === 0) {
       // Show a placeholder when no commands are available
       const placeholder = new vscode.TreeItem(
         'No commands found',
@@ -140,12 +229,21 @@ class CommandHistoryProvider implements vscode.TreeDataProvider<CommandTreeItem>
       return Promise.resolve([placeholder as any]);
     }
 
-    return Promise.resolve(
-      this.commands.map(cmd => new CommandTreeItem(cmd, this.context))
-    );
+    // Show running commands first, then completed commands
+    const items = [
+      ...this.runningCommands.map(cmd => new CommandTreeItem(cmd, this.context, this.serverPort)),
+      ...this.commands.map(cmd => new CommandTreeItem(cmd, this.context, this.serverPort))
+    ];
+
+    return Promise.resolve(items);
   }
 
   getCommand(id: number): CommandHistoryItem | undefined {
+    // Check running commands first
+    const runningCmd = this.runningCommands.find(cmd => cmd.processId === id);
+    if (runningCmd) {
+      return runningCmd;
+    }
     return this.commands.find(cmd => cmd.id === id);
   }
 
@@ -170,24 +268,33 @@ class CommandHistoryProvider implements vscode.TreeDataProvider<CommandTreeItem>
 class CommandTreeItem extends vscode.TreeItem {
   constructor(
     public readonly commandData: CommandHistoryItem,
-    private context: vscode.ExtensionContext
+    private context: vscode.ExtensionContext,
+    private serverPort: number = 3000
   ) {
     super(commandData.command, vscode.TreeItemCollapsibleState.None);
 
     this.tooltip = this.getTooltip();
     this.description = this.getDescription();
     this.iconPath = this.getIcon();
-    this.contextValue = 'commandItem';
+    this.contextValue = commandData.status === 'running' ? 'runningCommandItem' : 'commandItem';
 
     // Make it clickable to open output
+    const commandId = commandData.status === 'running' ? commandData.processId! : commandData.id;
     this.command = {
       command: 'commandNConquer.openOutput',
       title: 'Open Output',
-      arguments: [commandData.id]
+      arguments: [commandId, commandData.status === 'running']
     };
   }
 
   private getTooltip(): string {
+    if (this.commandData.status === 'running') {
+      return `Command: ${this.commandData.command}\n` +
+             `Status: ⏳ Running\n` +
+             `Duration: ${this.commandData.duration}ms\n` +
+             `Process ID: ${this.commandData.processId}`;
+    }
+
     const success = this.commandData.exitCode === 0;
     return `Command: ${this.commandData.command}\n` +
            `Exit Code: ${this.commandData.exitCode}\n` +
@@ -198,6 +305,11 @@ class CommandTreeItem extends vscode.TreeItem {
   }
 
   private getDescription(): string {
+    if (this.commandData.status === 'running') {
+      const durationSec = (this.commandData.duration / 1000).toFixed(1);
+      return `⏳ Running [${durationSec}s]`;
+    }
+
     const date = new Date(this.commandData.timestamp);
     const timeStr = date.toLocaleTimeString();
     const success = this.commandData.exitCode === 0;
@@ -206,6 +318,10 @@ class CommandTreeItem extends vscode.TreeItem {
   }
 
   private getIcon(): vscode.ThemeIcon {
+    if (this.commandData.status === 'running') {
+      return new vscode.ThemeIcon('sync~spin', new vscode.ThemeColor('charts.yellow'));
+    }
+
     const success = this.commandData.exitCode === 0;
     if (success) {
       return new vscode.ThemeIcon('pass', new vscode.ThemeColor('testing.iconPassed'));
@@ -216,147 +332,372 @@ class CommandTreeItem extends vscode.TreeItem {
 }
 
 // Statistics Tree Data Provider
-class StatsProvider implements vscode.TreeDataProvider<StatsTreeItem> {
-  private _onDidChangeTreeData: vscode.EventEmitter<StatsTreeItem | undefined | null | void> = new vscode.EventEmitter<StatsTreeItem | undefined | null | void>();
-  readonly onDidChangeTreeData: vscode.Event<StatsTreeItem | undefined | null | void> = this._onDidChangeTreeData.event;
+class RunningCommandsProvider implements vscode.WebviewViewProvider {
+  private _view?: vscode.WebviewView;
+  private _updateInterval?: NodeJS.Timeout;
+  private serverPort: number = 3000;
 
-  private stats: Stats | null = null;
-  private dbPath: string | null = null;
-  private lastError: string | null = null;
-
-  constructor() {
-    this.findDatabasePath();
+  constructor(private context: vscode.ExtensionContext) {
+    this.findServerPort();
   }
 
   /**
-   * Find the .basher/history.db file in the workspace
+   * Find the server port from .basher/port file
    */
-  private findDatabasePath(): void {
+  private findServerPort(): void {
+    // Try workspace folder first
     const workspaceFolders = vscode.workspace.workspaceFolders;
     if (workspaceFolders && workspaceFolders.length > 0) {
-      const basherDir = path.join(workspaceFolders[0].uri.fsPath, '.basher');
-      const dbFile = path.join(basherDir, 'history.db');
-      if (fs.existsSync(dbFile)) {
-        this.dbPath = dbFile;
+      const workspacePath = workspaceFolders[0].uri.fsPath;
+      const portFile = path.join(workspacePath, '.basher', 'port');
+
+      console.log(`[Basher] Looking for workspace port file at: ${portFile}`);
+
+      try {
+        if (fs.existsSync(portFile)) {
+          const portContent = fs.readFileSync(portFile, 'utf-8').trim();
+          const parsedPort = parseInt(portContent, 10);
+          if (!isNaN(parsedPort)) {
+            console.log(`[Basher] Found workspace-specific port ${parsedPort} in ${workspacePath}`);
+            this.serverPort = parsedPort;
+            return;
+          } else {
+            console.warn(`[Basher] Invalid port in workspace file: ${portContent}`);
+          }
+        } else {
+          console.log(`[Basher] Workspace port file not found`);
+        }
+      } catch (error) {
+        console.error(`[Basher] Error reading workspace port file:`, error);
       }
     }
-  }
 
-  refresh(): void {
-    this.findDatabasePath(); // Re-check in case it was created
-    this.loadStats();
-  }
-
-  async loadStats(): Promise<void> {
+    // Fallback to home directory (for global basher instances)
     try {
-      this.lastError = null; // Clear previous errors
+      const homeDir = require('os').homedir();
+      const portFile = path.join(homeDir, '.basher', 'port');
 
-      if (!this.dbPath || !fs.existsSync(this.dbPath)) {
-        this.stats = null;
-        this.lastError = !this.dbPath ? 'No workspace folder found' : 'Database file not found';
-        this._onDidChangeTreeData.fire();
-        return;
-      }
+      console.log(`[Basher] Looking for global port file at: ${portFile}`);
 
-      // Read stats directly from SQLite database using sql.js
-      const SQL = await initSqlJs();
-      const fileBuffer = fs.readFileSync(this.dbPath);
-      const db = new SQL.Database(fileBuffer);
-
-      const result = db.exec(`
-        SELECT
-          COUNT(*) as total,
-          SUM(CASE WHEN exit_code != 0 THEN 1 ELSE 0 END) as failures,
-          AVG(duration) as avg_duration
-        FROM command_history
-      `);
-
-      if (result.length > 0 && result[0].values.length > 0) {
-        const row = result[0].values[0];
-        this.stats = {
-          total: (row[0] as number) || 0,
-          failures: (row[1] as number) || 0,
-          avgDuration: Math.round((row[2] as number) || 0)
-        };
+      if (fs.existsSync(portFile)) {
+        const portContent = fs.readFileSync(portFile, 'utf-8').trim();
+        const parsedPort = parseInt(portContent, 10);
+        if (!isNaN(parsedPort)) {
+          console.log(`[Basher] Found global port ${parsedPort} in home directory`);
+          this.serverPort = parsedPort;
+          return;
+        } else {
+          console.warn(`[Basher] Invalid port in global file: ${portContent}`);
+        }
       } else {
-        this.stats = {
-          total: 0,
-          failures: 0,
-          avgDuration: 0
-        };
+        console.log(`[Basher] Global port file not found`);
       }
-
-      db.close();
-      this._onDidChangeTreeData.fire();
     } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      console.error('[Basher] Failed to load stats from database:', error);
-      this.lastError = `Error loading database: ${errorMsg}`;
-      this.stats = null;
-      this._onDidChangeTreeData.fire();
+      console.error(`[Basher] Error reading global port file:`, error);
+    }
+
+    console.log(`[Basher] Using default port ${this.serverPort}`);
+  }
+
+  public resolveWebviewView(
+    webviewView: vscode.WebviewView,
+    context: vscode.WebviewViewResolveContext,
+    _token: vscode.CancellationToken,
+  ) {
+    this._view = webviewView;
+
+    webviewView.webview.options = {
+      enableScripts: true,
+      localResourceRoots: [this.context.extensionUri]
+    };
+
+    webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
+
+    // Start polling for updates every 500ms
+    this.startUpdating();
+
+    // Clean up when view is disposed
+    webviewView.onDidDispose(() => {
+      this.stopUpdating();
+    });
+
+    // Handle visibility changes
+    webviewView.onDidChangeVisibility(() => {
+      if (webviewView.visible) {
+        this.startUpdating();
+      } else {
+        this.stopUpdating();
+      }
+    });
+  }
+
+  private startUpdating() {
+    if (this._updateInterval) {
+      return;
+    }
+
+    // Initial update
+    this.updateRunningCommands();
+
+    // Update every 500ms
+    this._updateInterval = setInterval(() => {
+      this.updateRunningCommands();
+    }, 500);
+  }
+
+  private stopUpdating() {
+    if (this._updateInterval) {
+      clearInterval(this._updateInterval);
+      this._updateInterval = undefined;
     }
   }
 
-  getTreeItem(element: StatsTreeItem): vscode.TreeItem {
-    return element;
+  private async updateRunningCommands() {
+    if (!this._view) {
+      return;
+    }
+
+    try {
+      // Refresh port before each request
+      this.findServerPort();
+      const running = await this.fetchRunningCommands();
+      this._view.webview.postMessage({ type: 'update', commands: running });
+    } catch (error) {
+      console.error('[Basher] Failed to fetch running commands:', error);
+    }
   }
 
-  getChildren(element?: StatsTreeItem): Thenable<StatsTreeItem[]> {
-    if (element) {
-      return Promise.resolve([]);
-    }
+  private async fetchRunningCommands(): Promise<any[]> {
+    const url = `http://localhost:${this.serverPort}/api/running`;
+    console.log(`[Basher] Fetching running commands from: ${url}`);
 
-    if (this.lastError) {
-      // Show error message
-      const errorItem = new StatsTreeItem(this.lastError, '', 'error');
-      return Promise.resolve([errorItem]);
-    }
+    return new Promise((resolve, reject) => {
+      http.get(url, (res) => {
+        let data = '';
+        res.on('data', (chunk) => data += chunk);
+        res.on('end', async () => {
+          try {
+            const result = JSON.parse(data);
+            if (result.success && result.data) {
+              console.log(`[Basher] Found ${result.data.length} running commands on port ${this.serverPort}`);
 
-    if (!this.stats) {
-      // Show placeholder when no data
-      const placeholder = new StatsTreeItem('No data available', 'Execute commands via MCP', 'info');
-      return Promise.resolve([placeholder]);
-    }
+              // Fetch output for each running command
+              const commandsWithOutput = await Promise.all(
+                result.data.map(async (cmd: any) => {
+                  try {
+                    const output = await this.fetchProcessOutput(cmd.id);
+                    return { ...cmd, stdout: output.stdout || '', stderr: output.stderr || '' };
+                  } catch (error) {
+                    console.error(`[Basher] Failed to fetch output for process ${cmd.id}:`, error);
+                    return { ...cmd, stdout: '', stderr: '' };
+                  }
+                })
+              );
 
-    const successRate = this.stats.total > 0
-      ? (((this.stats.total - this.stats.failures) / this.stats.total) * 100).toFixed(2)
-      : '0';
-
-    return Promise.resolve([
-      new StatsTreeItem('Total Commands', this.stats.total.toString(), 'symbol-number'),
-      new StatsTreeItem('Failed Commands', this.stats.failures.toString(), 'error'),
-      new StatsTreeItem('Success Rate', `${successRate}%`, 'pass'),
-      new StatsTreeItem('Avg Duration', `${this.stats.avgDuration}ms`, 'watch')
-    ]);
+              resolve(commandsWithOutput);
+            } else {
+              resolve([]);
+            }
+          } catch (error) {
+            resolve([]);
+          }
+        });
+      }).on('error', (err) => {
+        console.error(`[Basher] Failed to connect to port ${this.serverPort}:`, err);
+        resolve([]);
+      });
+    });
   }
 
-  private fetchJson(url: string): Promise<any> {
+  private async fetchProcessOutput(processId: number): Promise<any> {
+    const url = `http://localhost:${this.serverPort}/api/process/${processId}/output?lines=10`;
+
     return new Promise((resolve, reject) => {
       http.get(url, (res) => {
         let data = '';
         res.on('data', (chunk) => data += chunk);
         res.on('end', () => {
           try {
-            resolve(JSON.parse(data));
+            const result = JSON.parse(data);
+            if (result.success && result.data) {
+              resolve(result.data);
+            } else {
+              resolve({ stdout: '', stderr: '' });
+            }
           } catch (error) {
-            reject(error);
+            resolve({ stdout: '', stderr: '' });
           }
         });
-      }).on('error', reject);
+      }).on('error', () => {
+        resolve({ stdout: '', stderr: '' });
+      });
     });
   }
-}
 
-// Stats Tree Item
-class StatsTreeItem extends vscode.TreeItem {
-  constructor(
-    public readonly labelText: string,
-    public readonly value: string,
-    iconName: string
-  ) {
-    super(labelText, vscode.TreeItemCollapsibleState.None);
-    this.description = value;
-    this.iconPath = new vscode.ThemeIcon(iconName);
+  private _getHtmlForWebview(webview: vscode.Webview) {
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Running Commands</title>
+    <style>
+        body {
+            padding: 0;
+            margin: 0;
+            font-family: var(--vscode-font-family);
+            font-size: var(--vscode-font-size);
+            color: var(--vscode-foreground);
+            background: var(--vscode-editor-background);
+        }
+        .container {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            overflow: hidden;
+        }
+        .command-panel {
+            border-bottom: 1px solid var(--vscode-panel-border);
+            padding: 8px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            flex: 1;
+            min-height: 0;
+            overflow: hidden;
+        }
+        .command-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 4px 8px;
+            background: var(--vscode-editor-inactiveSelectionBackground);
+            border-radius: 3px;
+            font-size: 11px;
+        }
+        .command-title {
+            font-weight: 600;
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .command-duration {
+            color: var(--vscode-descriptionForeground);
+            font-size: 10px;
+        }
+        .command-output {
+            flex: 1;
+            overflow-y: auto;
+            background: var(--vscode-editor-background);
+            border: 1px solid var(--vscode-panel-border);
+            border-radius: 3px;
+            padding: 4px 8px;
+            font-family: var(--vscode-editor-font-family);
+            font-size: 11px;
+            line-height: 1.4;
+        }
+        .output-line {
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+        .empty-state {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            color: var(--vscode-descriptionForeground);
+            text-align: center;
+            padding: 20px;
+        }
+        .empty-icon {
+            font-size: 48px;
+            margin-bottom: 12px;
+            opacity: 0.5;
+        }
+        .empty-text {
+            font-size: 13px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container" id="container">
+        <div class="empty-state">
+            <div class="empty-icon">⏳</div>
+            <div class="empty-text">No commands currently running</div>
+        </div>
+    </div>
+
+    <script>
+        const vscode = acquireVsCodeApi();
+        const container = document.getElementById('container');
+
+        window.addEventListener('message', event => {
+            const message = event.data;
+            if (message.type === 'update') {
+                updateCommands(message.commands);
+            }
+        });
+
+        function updateCommands(commands) {
+            if (!commands || commands.length === 0) {
+                container.innerHTML = \`
+                    <div class="empty-state">
+                        <div class="empty-icon">⏳</div>
+                        <div class="empty-text">No commands currently running</div>
+                    </div>
+                \`;
+                return;
+            }
+
+            container.innerHTML = '';
+            commands.forEach(cmd => {
+                const panel = document.createElement('div');
+                panel.className = 'command-panel';
+
+                const header = document.createElement('div');
+                header.className = 'command-header';
+
+                const title = document.createElement('div');
+                title.className = 'command-title';
+                title.textContent = cmd.title || cmd.command;
+                title.title = cmd.command;
+
+                const duration = document.createElement('div');
+                duration.className = 'command-duration';
+                const seconds = Math.floor(cmd.duration / 1000);
+                duration.textContent = seconds + 's';
+
+                header.appendChild(title);
+                header.appendChild(duration);
+
+                const output = document.createElement('div');
+                output.className = 'command-output';
+
+                // Get last 10 lines of output
+                const stdout = cmd.stdout || '';
+                const lines = stdout.split('\\n').filter(l => l.trim()).slice(-10);
+                lines.forEach(line => {
+                    const lineDiv = document.createElement('div');
+                    lineDiv.className = 'output-line';
+                    // Remove timestamp prefix if present
+                    const cleaned = line.replace(/^\\[.*?\\]\\s*/, '');
+                    lineDiv.textContent = cleaned;
+                    output.appendChild(lineDiv);
+                });
+
+                // Auto-scroll to bottom
+                output.scrollTop = output.scrollHeight;
+
+                panel.appendChild(header);
+                panel.appendChild(output);
+                container.appendChild(panel);
+            });
+        }
+    </script>
+</body>
+</html>`;
   }
 }
 
@@ -428,11 +769,9 @@ class SSEClient {
   private eventSource: any = null;
   private serverUrl: string;
   private historyProvider: CommandHistoryProvider;
-  private statsProvider: StatsProvider;
 
-  constructor(historyProvider: CommandHistoryProvider, statsProvider: StatsProvider) {
+  constructor(historyProvider: CommandHistoryProvider) {
     this.historyProvider = historyProvider;
-    this.statsProvider = statsProvider;
     const config = vscode.workspace.getConfiguration('commandNConquer');
     this.serverUrl = config.get<string>('serverUrl') || 'http://localhost:3000';
   }
@@ -471,9 +810,8 @@ class SSEClient {
 
   private handleEvent(event: any): void {
     if (event.type === 'command_executed') {
-      // Refresh tree views
+      // Refresh history view
       this.historyProvider.refresh();
-      this.statsProvider.refresh();
 
       // Show notification
       vscode.window.showInformationMessage(
@@ -495,7 +833,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Create providers
   const historyProvider = new CommandHistoryProvider(context);
-  const statsProvider = new StatsProvider();
+  const runningCommandsProvider = new RunningCommandsProvider(context);
   const outputProvider = new CommandOutputProvider(historyProvider);
 
   // Register tree views
@@ -503,9 +841,10 @@ export function activate(context: vscode.ExtensionContext) {
     treeDataProvider: historyProvider
   });
 
-  const statsTreeView = vscode.window.createTreeView('commandNConquer.stats', {
-    treeDataProvider: statsProvider
-  });
+  // Register webview view for running commands
+  context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider('commandNConquer.runningCommands', runningCommandsProvider)
+  );
 
   // Register virtual document provider
   const outputScheme = 'command-output';
@@ -513,10 +852,9 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Initial load
   historyProvider.loadCommands();
-  statsProvider.loadStats();
 
   // Connect to SSE for real-time updates
-  const sseClient = new SSEClient(historyProvider, statsProvider);
+  const sseClient = new SSEClient(historyProvider);
   sseClient.connect();
 
   // Auto-refresh interval
@@ -527,7 +865,6 @@ export function activate(context: vscode.ExtensionContext) {
   if (refreshInterval > 0) {
     refreshTimer = setInterval(() => {
       historyProvider.refresh();
-      statsProvider.refresh();
     }, refreshInterval);
   }
 
@@ -541,16 +878,15 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand('commandNConquer.refresh', () => {
       historyProvider.refresh();
-      statsProvider.refresh();
       vscode.window.showInformationMessage('Command history refreshed');
     })
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('commandNConquer.openOutput', async (commandId: number) => {
+    vscode.commands.registerCommand('commandNConquer.openOutput', async (commandId: number, isRunning: boolean = false) => {
       const command = historyProvider.getCommand(commandId);
       if (command) {
-        CommandOutputPanel.createOrShow(context.extensionUri, commandId, command);
+        CommandOutputPanel.createOrShow(context.extensionUri, commandId, command, isRunning);
       } else {
         vscode.window.showErrorMessage(`Command ${commandId} not found`);
       }
@@ -598,7 +934,6 @@ export function activate(context: vscode.ExtensionContext) {
                     `Command completed with exit code ${result.data.exitCode}`
                   );
                   historyProvider.refresh();
-                  statsProvider.refresh();
                 } else {
                   vscode.window.showErrorMessage(`Command failed: ${result.error}`);
                 }
@@ -692,7 +1027,6 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Cleanup
   context.subscriptions.push(historyTreeView);
-  context.subscriptions.push(statsTreeView);
 
   context.subscriptions.push(new vscode.Disposable(() => {
     if (refreshTimer) {

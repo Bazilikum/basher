@@ -2,7 +2,7 @@
   "name": "basher-vscode",
   "displayName": "Basher",
   "description": "Enhanced command execution dashboard integrated into VS Code",
-  "version": "1.0.0",
+  "version": "1.3.4",
   "publisher": "bazilikum",
   "engines": {
     "vscode": "^1.85.0"
@@ -31,8 +31,9 @@
           "name": "Command History"
         },
         {
-          "id": "commandNConquer.stats",
-          "name": "Statistics"
+          "id": "commandNConquer.runningCommands",
+          "name": "Running Commands",
+          "type": "webview"
         }
       ]
     },
@@ -114,7 +115,7 @@
         },
         "commandNConquer.refreshInterval": {
           "type": "number",
-          "default": 5000,
+          "default": 1000,
           "description": "Auto-refresh interval in milliseconds (0 to disable)"
         },
         "commandNConquer.maxHistoryItems": {

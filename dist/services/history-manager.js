@@ -66,10 +66,11 @@ export class HistoryManager {
     }
     migrateDatabase() {
         try {
-            // Check if process_id column exists
+            // Check if columns exist
             const columns = this.db.prepare("PRAGMA table_info(command_history)").all();
             const hasProcessId = columns.some((col) => col.name === 'process_id');
             const hasStatus = columns.some((col) => col.name === 'status');
+            const hasTitle = columns.some((col) => col.name === 'title');
             if (!hasProcessId) {
                 this.db.exec('ALTER TABLE command_history ADD COLUMN process_id INTEGER');
                 logger.info('Added process_id column to command_history');
@@ -78,6 +79,10 @@ export class HistoryManager {
                 this.db.exec("ALTER TABLE command_history ADD COLUMN status TEXT DEFAULT 'completed'");
                 this.db.exec('CREATE INDEX IF NOT EXISTS idx_status ON command_history(status)');
                 logger.info('Added status column to command_history');
+            }
+            if (!hasTitle) {
+                this.db.exec('ALTER TABLE command_history ADD COLUMN title TEXT');
+                logger.info('Added title column to command_history');
             }
         }
         catch (error) {
@@ -90,12 +95,12 @@ export class HistoryManager {
     saveCommand(entry) {
         try {
             const stmt = this.db.prepare(`
-        INSERT INTO command_history (command, cwd, timestamp, exit_code, duration, stdout, stderr, process_id, status)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO command_history (command, title, cwd, timestamp, exit_code, duration, stdout, stderr, process_id, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
-            const result = stmt.run(entry.command, entry.cwd, entry.timestamp, entry.exitCode, entry.duration, entry.stdout, entry.stderr, entry.processId || null, entry.status || 'completed');
+            const result = stmt.run(entry.command, entry.title || entry.command, entry.cwd, entry.timestamp, entry.exitCode, entry.duration, entry.stdout, entry.stderr, entry.processId || null, entry.status || 'completed');
             const id = result.lastInsertRowid;
-            logger.debug({ id, command: entry.command, processId: entry.processId, status: entry.status }, 'Command saved to history');
+            logger.debug({ id, command: entry.command, title: entry.title, processId: entry.processId, status: entry.status }, 'Command saved to history');
             return id;
         }
         catch (error) {

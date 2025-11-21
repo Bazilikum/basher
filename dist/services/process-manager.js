@@ -10,7 +10,7 @@ class ProcessManager {
     /**
      * Register a new running process
      */
-    register(command, process) {
+    register(command, process, title) {
         const processId = ++this.processIdCounter;
         if (!process.pid) {
             logger.warn({ command }, 'Process started without PID');
@@ -19,12 +19,13 @@ class ProcessManager {
         this.processes.set(processId, {
             pid: process.pid,
             command,
+            title: title || command,
             startTime: Date.now(),
             process,
             stdout: '',
             stderr: ''
         });
-        logger.info({ processId, pid: process.pid, command }, 'Process registered');
+        logger.info({ processId, pid: process.pid, command, title }, 'Process registered');
         // Clean up when process exits
         process.on('exit', () => {
             this.unregister(processId);
@@ -77,6 +78,7 @@ class ProcessManager {
             id,
             pid: proc.pid,
             command: proc.command,
+            title: proc.title,
             duration: now - proc.startTime
         }));
     }
@@ -129,6 +131,7 @@ class ProcessManager {
             return {
                 processId,
                 command: proc.command,
+                title: proc.title,
                 status: 'running',
                 stdout,
                 stderr,
@@ -139,6 +142,7 @@ class ProcessManager {
         return {
             processId,
             command: proc.command,
+            title: proc.title,
             status: 'running',
             stdout: proc.stdout,
             stderr: proc.stderr,
