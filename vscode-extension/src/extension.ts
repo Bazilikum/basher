@@ -687,12 +687,14 @@ class RunningCommandsProvider implements vscode.WebviewViewProvider {
                     output.appendChild(lineDiv);
                 });
 
-                // Auto-scroll to bottom
-                output.scrollTop = output.scrollHeight;
-
                 panel.appendChild(header);
                 panel.appendChild(output);
                 container.appendChild(panel);
+
+                // Auto-scroll to bottom after DOM updates
+                setTimeout(() => {
+                    output.scrollTop = output.scrollHeight;
+                }, 0);
             });
         }
     </script>

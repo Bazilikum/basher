@@ -7,24 +7,33 @@ Fully integrated VS Code extension for Basher that brings command history, stati
 ### Left Sidebar Panel
 - **Activity Bar Icon**: Terminal icon in the left activity bar
 - **Command History View**: Scrollable list of all executed commands with:
-  - Color-coded status indicators (✓ success / ✗ failed)
+  - Color-coded status indicators (✓ success / ✗ failed / ⏳ running)
+  - Custom command titles (human-readable names instead of raw shell commands)
   - Timestamps and duration
   - Inline buttons for quick actions
   - Click to open output in editor pane
-- **Statistics View**: Real-time stats including:
-  - Total commands executed
-  - Failed commands count
-  - Success rate percentage
-  - Average execution duration
+  - Real-time updates every 1 second
+- **Running Commands View**: Live monitor of currently executing commands with:
+  - Split layout showing multiple commands simultaneously
+  - Real-time output streaming (updates every 500ms)
+  - Last 10 lines of stdout displayed for each command
+  - Auto-scroll to latest output
+  - Command duration timer
+  - Automatic removal when commands complete
 
 ### Editor Integration
 - **Virtual Documents**: Command outputs open as read-only text documents in editor panes
 - **Multi-pane Support**: Open multiple command outputs side-by-side
 - **Full Output Display**: Organized view with:
   - Command details (working directory, exit code, duration, timestamp)
-  - STDOUT section
-  - STDERR section
+  - Command title (if provided)
+  - Tabbed interface for STDOUT/STDERR/METADATA
+  - Syntax highlighting for command output
   - Clear separation and formatting
+- **Live Output Streaming**: Watch commands execute in real-time
+  - Auto-scroll toggle to follow latest output
+  - Per-line timestamps for precise debugging
+  - Incremental updates without tab switching
 
 ### Real-time Updates
 - **SSE Integration**: Automatic updates when new commands are executed
@@ -102,6 +111,23 @@ Configure in VS Code Settings (`Cmd+,` or `Ctrl+,`):
 - **Basher: Max History Items**
   - Maximum commands to display in the tree (default: 100)
 
+## Workspace Isolation
+
+The extension automatically isolates commands by workspace using a smart port detection mechanism:
+
+1. **Port File Detection**: When the Basher MCP server starts, it writes a `.basher/port` file containing its web server port number
+2. **Automatic Discovery**: The extension checks your workspace folder for this port file
+3. **Fallback Support**: If no workspace-specific port file is found, it falls back to checking the home directory (`~/.basher/port`)
+4. **Multi-Project Support**: Each workspace can run its own Basher instance on a different port, and the extension will connect to the correct one
+
+**How it works:**
+- When you open a project with a `.mcp.json` configuration that includes `--project "${workspaceFolder}"`, Basher creates a `.basher/` folder in that project
+- The port file is automatically created when the MCP server starts
+- The VS Code extension reads this file to know which port to connect to
+- Commands from different projects are completely isolated
+
+**No configuration needed** - it just works! Each workspace automatically connects to its own Basher instance.
+
 ## Features in Detail
 
 ### Command List
@@ -175,13 +201,16 @@ Click the play icon (▶) next to any command to:
 
 The extension consists of:
 
-1. **TreeDataProvider** - Manages the command history tree view
-2. **StatsProvider** - Displays execution statistics
-3. **CommandOutputProvider** - Virtual document provider for outputs
-4. **SSEClient** - Real-time updates via Server-Sent Events
-5. **Commands** - Handlers for refresh, search, rerun, etc.
+1. **CommandHistoryProvider** (TreeDataProvider) - Manages the command history tree view with direct database access using sql.js
+2. **RunningCommandsProvider** (WebviewViewProvider) - Live monitor displaying currently executing commands with real-time output
+3. **OutputPanelManager** - Manages webview panels for individual command outputs with tabbed interface
+4. **Port Detection** - Automatically discovers the correct Basher server port from workspace or home directory
+5. **Commands** - Handlers for refresh, search, rerun, and opening outputs
 
-All communication with the MCP server happens via HTTP REST API and SSE.
+Communication methods:
+- **Database Access**: Direct SQLite reads via sql.js for command history (faster, no API dependency)
+- **HTTP REST API**: Live command monitoring via `/api/running` and `/api/process/:id/output`
+- **WebView Messaging**: Real-time updates to output panels and running commands view
 
 ## License
 

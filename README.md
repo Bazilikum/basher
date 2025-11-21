@@ -105,10 +105,19 @@ The Basher VS Code extension provides a native sidebar panel to browse command h
 
 - **Sidebar Panel**: Click the terminal icon in the activity bar
 - **Command Tree View**: Browse all executed commands with status indicators
-- **Live Running Commands**: See commands currently executing with spinning icon (⏳) and real-time duration
+- **Running Commands Monitor**: Dedicated webview panel showing all currently executing commands:
+  - Split layout displaying multiple commands simultaneously
+  - Live output streaming (updates every 500ms)
+  - Auto-scroll to latest output
+  - Last 10 lines of stdout per command
+  - Real-time duration timer
 - **Custom Titles**: Commands display with human-readable titles instead of raw shell commands
-- **Output Preview**: Click any command to view its full output in an editor pane
-- **Live Output Streaming**: Watch output appear line-by-line as commands execute (updates every 500ms)
+- **Output Preview**: Click any command to view its full output in an editor pane with:
+  - Tabbed interface (STDOUT/STDERR/METADATA)
+  - Auto-scroll toggle
+  - Live streaming for running commands
+  - Per-line timestamps
+- **Workspace Isolation**: Automatically connects to the correct Basher instance per workspace via port file detection
 - **Real-time Updates**: Tree view refreshes every 1 second to show new commands
 - **Quick Actions**: Rerun commands or view details with inline buttons
 - **Search**: Full-text search across command history
@@ -418,6 +427,8 @@ Create `.mcp.json` in each project root:
 **What Happens Automatically:**
 - ✅ Each project gets its own `.basher/history.db` folder
 - ✅ `.basher/.gitignore` is auto-created to exclude database files
+- ✅ `.basher/port` file is created with the web server port number
+- ✅ VS Code extension automatically detects and uses the correct port per workspace
 - ✅ Command history is completely isolated per project
 - ✅ No manual path configuration needed
 - ✅ Just set unique `WEB_PORT` for each project
