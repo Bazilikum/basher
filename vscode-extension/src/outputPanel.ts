@@ -52,14 +52,15 @@ export class CommandOutputPanel {
     // If we already have a panel for this command, show it
     if (CommandOutputPanel.panels.has(commandId)) {
       const existingPanel = CommandOutputPanel.panels.get(commandId)!;
-      existingPanel._panel.reveal(column);
+      // Reveal with preserveFocus: false to ensure the panel gets focus
+      existingPanel._panel.reveal(column, false);
       return existingPanel;
     }
 
     // Otherwise, create a new panel
     const panel = vscode.window.createWebviewPanel(
       CommandOutputPanel.viewType,
-      `Output: ${commandData.command}`,
+      `#${commandId} ${commandData.command}`,
       column || vscode.ViewColumn.One,
       {
         enableScripts: true,
@@ -574,6 +575,10 @@ export class CommandOutputPanel {
 <body>
     <div class="header">
         <div class="command-info">
+            <div class="info-item">
+                <span class="info-label">ID:</span>
+                <span class="info-value">#${command.id}</span>
+            </div>
             <div class="info-item">
                 <span class="info-label">Command:</span>
                 <span class="info-value">${escapeHtml(command.command)}</span>

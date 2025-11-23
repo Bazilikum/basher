@@ -2,7 +2,7 @@
   "name": "basher-vscode",
   "displayName": "Basher",
   "description": "Enhanced command execution dashboard integrated into VS Code",
-  "version": "1.3.5",
+  "version": "1.4.0",
   "publisher": "bazilikum",
   "engines": {
     "vscode": "^1.85.0"
@@ -72,6 +72,12 @@
         "title": "Search Command History",
         "icon": "$(search)",
         "category": "Basher"
+      },
+      {
+        "command": "commandNConquer.terminateCommand",
+        "title": "Terminate Command",
+        "icon": "$(stop)",
+        "category": "Basher"
       }
     ],
     "menus": {
@@ -101,6 +107,16 @@
         {
           "command": "commandNConquer.rerunCommand",
           "when": "view == commandNConquer.commandHistory && viewItem == commandItem",
+          "group": "inline"
+        },
+        {
+          "command": "commandNConquer.openOutput",
+          "when": "view == commandNConquer.commandHistory && viewItem == runningCommandItem",
+          "group": "inline"
+        },
+        {
+          "command": "commandNConquer.terminateCommand",
+          "when": "view == commandNConquer.commandHistory && viewItem == runningCommandItem",
           "group": "inline"
         }
       ]

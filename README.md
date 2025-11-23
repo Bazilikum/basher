@@ -457,6 +457,11 @@ Execute a shell command with enhanced logging and automatic history tracking.
 - `cwd` (string, optional): Working directory for execution
 - `stdin` (string, optional): Input to pipe to the command
 - `timeout` (number, optional): Timeout in milliseconds (default: 300000ms / 5 minutes)
+- `background` (boolean, optional): Run in background (default: true). Set to false for synchronous execution
+- `title` (string, optional): Human-readable title for the command
+
+**Important:**
+> ⚠️ **Do NOT use for sleep/wait commands with default background execution** - they return immediately without waiting. For sleep/wait commands, set `background: false`.
 
 **Example:**
 ```typescript

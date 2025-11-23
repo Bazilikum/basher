@@ -289,14 +289,16 @@ class CommandTreeItem extends vscode.TreeItem {
 
   private getTooltip(): string {
     if (this.commandData.status === 'running') {
-      return `Command: ${this.commandData.command}\n` +
+      return `ID: ${this.commandData.processId}\n` +
+             `Command: ${this.commandData.command}\n` +
              `Status: ⏳ Running\n` +
              `Duration: ${this.commandData.duration}ms\n` +
              `Process ID: ${this.commandData.processId}`;
     }
 
     const success = this.commandData.exitCode === 0;
-    return `Command: ${this.commandData.command}\n` +
+    return `ID: ${this.commandData.id}\n` +
+           `Command: ${this.commandData.command}\n` +
            `Exit Code: ${this.commandData.exitCode}\n` +
            `Duration: ${this.commandData.duration}ms\n` +
            `Working Directory: ${this.commandData.cwd}\n` +
@@ -305,16 +307,18 @@ class CommandTreeItem extends vscode.TreeItem {
   }
 
   private getDescription(): string {
+    const idPrefix = `#${this.commandData.id || this.commandData.processId}`;
+
     if (this.commandData.status === 'running') {
       const durationSec = (this.commandData.duration / 1000).toFixed(1);
-      return `⏳ Running [${durationSec}s]`;
+      return `${idPrefix} ⏳ Running [${durationSec}s]`;
     }
 
     const date = new Date(this.commandData.timestamp);
     const timeStr = date.toLocaleTimeString();
     const success = this.commandData.exitCode === 0;
     const statusIcon = success ? '✓' : '✗';
-    return `${statusIcon} ${timeStr} [${this.commandData.duration}ms]`;
+    return `${idPrefix} ${statusIcon} ${timeStr} [${this.commandData.duration}ms]`;
   }
 
   private getIcon(): vscode.ThemeIcon {
@@ -953,6 +957,81 @@ export function activate(context: vscode.ExtensionContext) {
 
       } catch (error) {
         vscode.window.showErrorMessage(`Failed to rerun command: ${error}`);
+      }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('commandNConquer.terminateCommand', async (item: CommandTreeItem) => {
+      const command = item.commandData;
+
+      if (command.status !== 'running' || !command.processId) {
+        vscode.window.showWarningMessage('Command is not running');
+        return;
+      }
+
+      try {
+        // Find the server port
+        let serverPort = 3000;
+        const workspaceFolders = vscode.workspace.workspaceFolders;
+        if (workspaceFolders && workspaceFolders.length > 0) {
+          const portFile = path.join(workspaceFolders[0].uri.fsPath, '.basher', 'port');
+          if (fs.existsSync(portFile)) {
+            const portContent = fs.readFileSync(portFile, 'utf-8').trim();
+            const parsedPort = parseInt(portContent, 10);
+            if (!isNaN(parsedPort)) {
+              serverPort = parsedPort;
+            }
+          }
+        }
+
+        const result = await vscode.window.showWarningMessage(
+          `Terminate command: ${command.command}?`,
+          'Yes', 'No'
+        );
+
+        if (result !== 'Yes') {
+          return;
+        }
+
+        // Make POST request to /api/terminate/:processId
+        await new Promise((resolve, reject) => {
+          const url = new URL(`http://localhost:${serverPort}/api/terminate/${command.processId}`);
+          const options = {
+            hostname: url.hostname,
+            port: url.port,
+            path: url.pathname,
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            }
+          };
+
+          const req = http.request(options, (res) => {
+            let data = '';
+            res.on('data', (chunk) => data += chunk);
+            res.on('end', () => {
+              try {
+                const result = JSON.parse(data);
+                if (result.success) {
+                  vscode.window.showInformationMessage(`Command terminated (Process ID: ${command.processId})`);
+                  historyProvider.refresh();
+                } else {
+                  vscode.window.showErrorMessage(`Failed to terminate: ${result.error}`);
+                }
+                resolve(result);
+              } catch (error) {
+                reject(error);
+              }
+            });
+          });
+
+          req.on('error', reject);
+          req.end();
+        });
+
+      } catch (error) {
+        vscode.window.showErrorMessage(`Failed to terminate command: ${error}`);
       }
     })
   );

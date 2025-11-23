@@ -824,11 +824,10 @@
               <span class="command-time">${new Date(cmd.timestamp).toLocaleString()}</span>
               <span class="status-badge ${statusClass}">${statusText}</span>
             </div>
-            <div class="command-text">${escapeHtml(cmd.command)}</div>
+            <div class="command-text">#${cmd.id} ${escapeHtml(cmd.command)}</div>
             <div class="command-meta">
               <span>Exit: ${cmd.exitCode}</span>
               <span>Duration: ${cmd.duration}ms</span>
-              <span>ID: ${cmd.id}</span>
             </div>
           </div>
         `;
