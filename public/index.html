@@ -113,6 +113,17 @@
       border-color: #58a6ff;
     }
 
+    .btn-small.btn-danger {
+      background: #da3633;
+      border-color: #f85149;
+      color: #ffffff;
+    }
+
+    .btn-small.btn-danger:hover {
+      background: #b62324;
+      border-color: #da3633;
+    }
+
     .search-box {
       padding: 12px;
       background: #0d1117;
@@ -634,7 +645,10 @@
       <div class="left-panel">
         <div class="panel-header">
           <span class="panel-title">Commands</span>
-          <button class="btn-small" onclick="clearAllSelections()">Clear Selection</button>
+          <div style="display: flex; gap: 8px;">
+            <button class="btn-small" onclick="clearAllSelections()">Clear Selection</button>
+            <button class="btn-small btn-danger" onclick="clearHistory()">Clear History</button>
+          </div>
         </div>
         <div class="search-box">
           <input type="text" class="search-input" id="command-search" placeholder="Search commands..." onkeyup="handleCommandSearch()">
@@ -741,6 +755,22 @@
           if (cmd.id && selectedCommands.has(cmd.id)) {
             updateOutputPanel(cmd);
           }
+        }
+
+        if (data.type === 'history_cleared') {
+          // Clear local state
+          allCommands = [];
+          selectedCommands.clear();
+
+          // Re-render UI
+          renderCommandList([]);
+          clearAllSelections();
+
+          // Show notification
+          showNotification('History Cleared', 'Command history was cleared', 'info');
+
+          // Reload stats
+          loadStats();
         }
       };
 
@@ -1120,6 +1150,45 @@
         </div>
       `;
       updateOutputCount();
+    }
+
+    async function clearHistory() {
+      // Confirm with user
+      if (!confirm('Clear all command history? This action cannot be undone.')) {
+        return;
+      }
+
+      try {
+        const response = await fetch('/api/history', {
+          method: 'DELETE',
+          headers: {
+            'Content-Type': 'application/json'
+          }
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+          // Clear local state
+          allCommands = [];
+          selectedCommands.clear();
+
+          // Re-render UI
+          renderCommandList([]);
+          clearAllSelections();
+
+          // Show success notification
+          showNotification('History Cleared', result.message, 'success');
+
+          // Reload stats
+          loadStats();
+        } else {
+          showNotification('Error', result.error || 'Failed to clear history', 'error');
+        }
+      } catch (error) {
+        console.error('Error clearing history:', error);
+        showNotification('Error', 'Failed to clear history: ' + error.message, 'error');
+      }
     }
 
     function setGridLayout(columns) {
