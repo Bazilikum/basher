@@ -78,6 +78,12 @@
         "title": "Terminate Command",
         "icon": "$(stop)",
         "category": "Basher"
+      },
+      {
+        "command": "commandNConquer.clearHistory",
+        "title": "Clear History",
+        "icon": "$(clear-all)",
+        "category": "Basher"
       }
     ],
     "menus": {
@@ -89,6 +95,11 @@
         },
         {
           "command": "commandNConquer.searchHistory",
+          "when": "view == commandNConquer.commandHistory",
+          "group": "navigation"
+        },
+        {
+          "command": "commandNConquer.clearHistory",
           "when": "view == commandNConquer.commandHistory",
           "group": "navigation"
         },

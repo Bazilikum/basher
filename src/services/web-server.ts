@@ -178,11 +178,14 @@ export class WebServer {
     // API: Clear history
     this.app.delete('/api/history', (req: Request, res: Response) => {
       try {
-        // This would require adding a clearHistory method to HistoryManager
-        // For now, just return a message
+        this.historyManager.clearHistory();
+
+        // Broadcast to SSE clients
+        this.broadcast('history_cleared', {});
+
         res.json({
           success: true,
-          message: 'History clearing not yet implemented. Restart server to clear in-memory cache.'
+          message: 'Command history cleared successfully'
         });
       } catch (error) {
         logger.error({ error }, 'Failed to clear history');

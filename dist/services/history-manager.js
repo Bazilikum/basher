@@ -266,6 +266,22 @@ export class HistoryManager {
         }
     }
     /**
+     * Clear all command history
+     */
+    clearHistory() {
+        try {
+            this.db.exec(`
+        DELETE FROM command_history;
+        DELETE FROM command_history_fts;
+      `);
+            logger.info('Command history cleared');
+        }
+        catch (error) {
+            logger.error({ error }, 'Failed to clear history');
+            throw error;
+        }
+    }
+    /**
      * Close the database connection
      */
     close() {

@@ -1064,6 +1064,81 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   context.subscriptions.push(
+    vscode.commands.registerCommand('commandNConquer.clearHistory', async () => {
+      // Confirm with user
+      const result = await vscode.window.showWarningMessage(
+        'Clear all command history? This action cannot be undone.',
+        { modal: true },
+        'Clear History', 'Cancel'
+      );
+
+      if (result !== 'Clear History') {
+        return;
+      }
+
+      try {
+        // Find the server port
+        const workspaceFolders = vscode.workspace.workspaceFolders;
+        let port = 3000; // default
+
+        if (workspaceFolders && workspaceFolders.length > 0) {
+          const portFile = path.join(workspaceFolders[0].uri.fsPath, '.basher', 'port');
+          try {
+            if (fs.existsSync(portFile)) {
+              const portContent = fs.readFileSync(portFile, 'utf-8').trim();
+              const parsedPort = parseInt(portContent, 10);
+              if (!isNaN(parsedPort)) {
+                port = parsedPort;
+              }
+            }
+          } catch (error) {
+            console.error('[Basher] Failed to read port file:', error);
+          }
+        }
+
+        // Make DELETE request to /api/history
+        await new Promise((resolve, reject) => {
+          const url = new URL(`http://localhost:${port}/api/history`);
+          const options = {
+            hostname: url.hostname,
+            port: url.port,
+            path: url.pathname,
+            method: 'DELETE',
+            headers: {
+              'Content-Type': 'application/json',
+            }
+          };
+
+          const req = http.request(options, (res) => {
+            let data = '';
+            res.on('data', (chunk) => data += chunk);
+            res.on('end', () => {
+              try {
+                const result = JSON.parse(data);
+                if (result.success) {
+                  vscode.window.showInformationMessage('Command history cleared successfully');
+                  historyProvider.refresh();
+                } else {
+                  vscode.window.showErrorMessage(`Failed to clear history: ${result.error}`);
+                }
+                resolve(result);
+              } catch (error) {
+                reject(error);
+              }
+            });
+          });
+
+          req.on('error', reject);
+          req.end();
+        });
+
+      } catch (error) {
+        vscode.window.showErrorMessage(`Failed to clear history: ${error}`);
+      }
+    })
+  );
+
+  context.subscriptions.push(
     vscode.commands.registerCommand('commandNConquer.searchHistory', async () => {
       const query = await vscode.window.showInputBox({
         prompt: 'Search command history',

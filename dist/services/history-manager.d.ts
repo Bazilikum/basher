@@ -44,6 +44,10 @@ export declare class HistoryManager {
         avgDuration: number;
     };
     /**
+     * Clear all command history
+     */
+    clearHistory(): void;
+    /**
      * Close the database connection
      */
     close(): void;

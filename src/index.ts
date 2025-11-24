@@ -251,6 +251,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
+        name: 'clear_history',
+        description: 'Clear all command history from the database. This permanently deletes all stored command executions and cannot be undone. Use with caution.',
+        inputSchema: {
+          type: 'object',
+          properties: {},
+        },
+      },
+      {
         name: 'terminate_command',
         description: 'Terminate a running command by its process ID. Sends SIGTERM for graceful shutdown, followed by SIGKILL after 5 seconds if process is still running.',
         inputSchema: {
@@ -862,6 +870,53 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           },
         ],
       };
+    }
+
+    // Clear history
+    if (name === 'clear_history') {
+      logger.info('Clearing command history');
+
+      try {
+        historyManager.clearHistory();
+
+        // Broadcast to web UI clients
+        if (webServer) {
+          webServer.broadcast('history_cleared', {});
+        }
+
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(
+                {
+                  success: true,
+                  message: 'Command history cleared successfully. All stored command executions have been permanently deleted.',
+                },
+                null,
+                2
+              ),
+            },
+          ],
+        };
+      } catch (error: any) {
+        logger.error({ error }, 'Failed to clear history');
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(
+                {
+                  success: false,
+                  error: error.message || 'Failed to clear history',
+                },
+                null,
+                2
+              ),
+            },
+          ],
+        };
+      }
     }
 
     // Advanced search
