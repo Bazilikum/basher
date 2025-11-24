@@ -11,6 +11,7 @@ export interface CommandResult {
 export interface CommandHistoryEntry {
     id?: number;
     command: string;
+    title?: string;
     cwd: string;
     timestamp: string;
     exitCode: number;

@@ -113,7 +113,7 @@ const executeCommandSchema = z.object({
   command: z.string().min(1, 'Command cannot be empty'),
   cwd: z.string().optional(),
   stdin: z.string().optional(),
-  timeout: z.number().positive().optional().default(300000),
+  timeout: z.number().positive().optional(),
   background: z.boolean().optional().default(true),
   title: z.string().optional(),
 });
@@ -166,7 +166,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             timeout: {
               type: 'number',
-              description: 'Timeout in milliseconds (optional, defaults to 300000ms / 5 minutes)',
+              description: 'Timeout in milliseconds (optional, no timeout by default)',
             },
             background: {
               type: 'boolean',
@@ -218,6 +218,20 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               description: 'Output format: "json" (default) or "toon" (~40% fewer tokens for tabular data)',
             },
           },
+        },
+      },
+      {
+        name: 'get_command_by_id',
+        description: 'Retrieve a specific command execution by its ID from the history database. Returns complete execution details including stdout, stderr, exit code, duration, and metadata.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            commandId: {
+              type: 'number',
+              description: 'The ID of the command to retrieve',
+            },
+          },
+          required: ['commandId'],
         },
       },
       {
@@ -739,6 +753,63 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           {
             type: 'text',
             text: encodeOutput(data, outputFormat as OutputFormat),
+          },
+        ],
+      };
+    }
+
+    // Get command by ID
+    if (name === 'get_command_by_id') {
+      const params = z.object({ commandId: z.number() }).parse(args);
+      const { commandId } = params;
+
+      logger.info({ commandId }, 'Getting command by ID');
+
+      const command = historyManager.getCommandById(commandId);
+
+      if (!command) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(
+                {
+                  error: 'Command not found',
+                  commandId,
+                  message: 'No command exists with this ID. Use get_recent_commands or search_command_history to find available commands.',
+                },
+                null,
+                2
+              ),
+            },
+          ],
+        };
+      }
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(
+              {
+                id: command.id,
+                command: command.command,
+                title: command.title,
+                cwd: command.cwd,
+                timestamp: command.timestamp,
+                exitCode: command.exitCode,
+                duration: `${command.duration}ms`,
+                success: command.exitCode === 0,
+                processId: command.processId,
+                status: command.status,
+                stdout: command.stdout,
+                stderr: command.stderr,
+                stdoutLength: command.stdout?.length || 0,
+                stderrLength: command.stderr?.length || 0,
+              },
+              null,
+              2
+            ),
           },
         ],
       };

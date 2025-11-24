@@ -29,6 +29,7 @@ export declare class HistoryManager {
     /**
      * Get recent command history
      */
+    getCommandById(id: number): CommandHistoryEntry | null;
     getRecentHistory(limit?: number): CommandHistoryEntry[];
     /**
      * Get command history by exit code

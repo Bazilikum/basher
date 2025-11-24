@@ -15,7 +15,7 @@ export async function executeCommand(
   command: string,
   cwd?: string,
   stdin?: string,
-  timeout: number = 300000, // 5 minutes default
+  timeout?: number,
   title?: string
 ): Promise<CommandResult & { processId: number }> {
   return new Promise((resolve, reject) => {
@@ -29,7 +29,7 @@ export async function executeCommand(
       title: commandTitle,
       cwd: workingDir,
       hasStdin: !!stdin,
-      timeout,
+      timeout: timeout || 'none',
     }, 'Starting command execution');
 
     let stdout = '';
@@ -60,20 +60,23 @@ export async function executeCommand(
     // Register process for tracking and termination
     const processId = processManager.register(command, child, commandTitle);
 
-    // Set up timeout
-    const timeoutHandle = setTimeout(() => {
-      timedOut = true;
-      child.kill('SIGTERM');
-      logger.warn({ command, timeout }, 'Command execution timed out');
+    // Set up timeout only if specified
+    let timeoutHandle: NodeJS.Timeout | undefined;
+    if (timeout) {
+      timeoutHandle = setTimeout(() => {
+        timedOut = true;
+        child.kill('SIGTERM');
+        logger.warn({ command, timeout }, 'Command execution timed out');
 
-      // Force kill after 5 more seconds if still running
-      setTimeout(() => {
-        if (!child.killed) {
-          child.kill('SIGKILL');
-          logger.error({ command }, 'Command force killed after timeout');
-        }
-      }, 5000);
-    }, timeout);
+        // Force kill after 5 more seconds if still running
+        setTimeout(() => {
+          if (!child.killed) {
+            child.kill('SIGKILL');
+            logger.error({ command }, 'Command force killed after timeout');
+          }
+        }, 5000);
+      }, timeout);
+    }
 
     // Capture stdout in real-time with timestamps
     child.stdout.setEncoding('utf8');
@@ -138,7 +141,7 @@ export async function executeCommand(
 
     // Handle process errors
     child.on('error', (error) => {
-      clearTimeout(timeoutHandle);
+      if (timeoutHandle) clearTimeout(timeoutHandle);
       logger.error({
         error: error.message,
         command,
@@ -149,7 +152,7 @@ export async function executeCommand(
 
     // Handle process completion
     child.on('close', (exitCode) => {
-      clearTimeout(timeoutHandle);
+      if (timeoutHandle) clearTimeout(timeoutHandle);
       const duration = Date.now() - startTime;
 
       // Flush any remaining buffered content with timestamps

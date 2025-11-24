@@ -190,6 +190,38 @@ export class HistoryManager {
   /**
    * Get recent command history
    */
+  getCommandById(id: number): CommandHistoryEntry | null {
+    try {
+      const stmt = this.db.prepare(`
+        SELECT * FROM command_history
+        WHERE id = ?
+      `);
+
+      const row = stmt.get(id) as any;
+
+      if (!row) {
+        return null;
+      }
+
+      return {
+        id: row.id,
+        command: row.command,
+        title: row.title,
+        cwd: row.cwd,
+        timestamp: row.timestamp,
+        exitCode: row.exit_code,
+        duration: row.duration,
+        stdout: row.stdout,
+        stderr: row.stderr,
+        processId: row.process_id,
+        status: row.status,
+      };
+    } catch (error) {
+      logger.error({ error, id }, 'Error getting command by ID');
+      return null;
+    }
+  }
+
   getRecentHistory(limit: number = 100): CommandHistoryEntry[] {
     try {
       const stmt = this.db.prepare(`

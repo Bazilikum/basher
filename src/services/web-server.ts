@@ -97,6 +97,28 @@ export class WebServer {
       }
     });
 
+    // API: Get command by ID
+    this.app.get('/api/history/:id', (req: Request, res: Response) => {
+      try {
+        const id = parseInt(req.params.id);
+
+        if (isNaN(id)) {
+          return res.status(400).json({ success: false, error: 'Invalid command ID' });
+        }
+
+        const command = this.historyManager.getCommandById(id);
+
+        if (!command) {
+          return res.status(404).json({ success: false, error: 'Command not found' });
+        }
+
+        res.json({ success: true, data: command });
+      } catch (error) {
+        logger.error({ error, id: req.params.id }, 'Failed to fetch command by ID');
+        res.status(500).json({ success: false, error: 'Failed to fetch command' });
+      }
+    });
+
     // API: Search command history
     this.app.get('/api/search', (req: Request, res: Response) => {
       try {
@@ -196,7 +218,7 @@ export class WebServer {
             command,
             cwd || process.cwd(),
             stdin,
-            timeout || 300000,
+            timeout,
             commandTitle
           ).then(result => {
             // Save to history when complete
@@ -235,7 +257,7 @@ export class WebServer {
           command,
           cwd || process.cwd(),
           stdin,
-          timeout || 300000,
+          timeout,
           commandTitle
         );
 

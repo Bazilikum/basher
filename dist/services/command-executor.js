@@ -8,8 +8,7 @@ import { processManager } from './process-manager.js';
  * Execute a shell command with enhanced logging and timeout support
  * Returns both the command result and the process ID for tracking
  */
-export async function executeCommand(command, cwd, stdin, timeout = 300000, // 5 minutes default
-title) {
+export async function executeCommand(command, cwd, stdin, timeout, title) {
     return new Promise((resolve, reject) => {
         const startTime = Date.now();
         const timestamp = new Date().toISOString();
@@ -20,7 +19,7 @@ title) {
             title: commandTitle,
             cwd: workingDir,
             hasStdin: !!stdin,
-            timeout,
+            timeout: timeout || 'none',
         }, 'Starting command execution');
         let stdout = '';
         let stderr = '';
@@ -46,19 +45,22 @@ title) {
         });
         // Register process for tracking and termination
         const processId = processManager.register(command, child, commandTitle);
-        // Set up timeout
-        const timeoutHandle = setTimeout(() => {
-            timedOut = true;
-            child.kill('SIGTERM');
-            logger.warn({ command, timeout }, 'Command execution timed out');
-            // Force kill after 5 more seconds if still running
-            setTimeout(() => {
-                if (!child.killed) {
-                    child.kill('SIGKILL');
-                    logger.error({ command }, 'Command force killed after timeout');
-                }
-            }, 5000);
-        }, timeout);
+        // Set up timeout only if specified
+        let timeoutHandle;
+        if (timeout) {
+            timeoutHandle = setTimeout(() => {
+                timedOut = true;
+                child.kill('SIGTERM');
+                logger.warn({ command, timeout }, 'Command execution timed out');
+                // Force kill after 5 more seconds if still running
+                setTimeout(() => {
+                    if (!child.killed) {
+                        child.kill('SIGKILL');
+                        logger.error({ command }, 'Command force killed after timeout');
+                    }
+                }, 5000);
+            }, timeout);
+        }
         // Capture stdout in real-time with timestamps
         child.stdout.setEncoding('utf8');
         child.stdout.on('data', (chunk) => {
@@ -114,7 +116,8 @@ title) {
         }
         // Handle process errors
         child.on('error', (error) => {
-            clearTimeout(timeoutHandle);
+            if (timeoutHandle)
+                clearTimeout(timeoutHandle);
             logger.error({
                 error: error.message,
                 command,
@@ -124,7 +127,8 @@ title) {
         });
         // Handle process completion
         child.on('close', (exitCode) => {
-            clearTimeout(timeoutHandle);
+            if (timeoutHandle)
+                clearTimeout(timeoutHandle);
             const duration = Date.now() - startTime;
             // Flush any remaining buffered content with timestamps
             if (stdoutBuffer) {

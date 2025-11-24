@@ -80,6 +80,24 @@ export class WebServer {
                 res.status(500).json({ success: false, error: 'Failed to fetch history' });
             }
         });
+        // API: Get command by ID
+        this.app.get('/api/history/:id', (req, res) => {
+            try {
+                const id = parseInt(req.params.id);
+                if (isNaN(id)) {
+                    return res.status(400).json({ success: false, error: 'Invalid command ID' });
+                }
+                const command = this.historyManager.getCommandById(id);
+                if (!command) {
+                    return res.status(404).json({ success: false, error: 'Command not found' });
+                }
+                res.json({ success: true, data: command });
+            }
+            catch (error) {
+                logger.error({ error, id: req.params.id }, 'Failed to fetch command by ID');
+                res.status(500).json({ success: false, error: 'Failed to fetch command' });
+            }
+        });
         // API: Search command history
         this.app.get('/api/search', (req, res) => {
             try {
@@ -170,7 +188,7 @@ export class WebServer {
                 // If background mode (default), return immediately with processId
                 if (background) {
                     // Execute in background (don't await)
-                    executeCommand(command, cwd || process.cwd(), stdin, timeout || 300000, commandTitle).then(result => {
+                    executeCommand(command, cwd || process.cwd(), stdin, timeout, commandTitle).then(result => {
                         // Save to history when complete
                         const historyEntry = {
                             command,
@@ -200,7 +218,7 @@ export class WebServer {
                     });
                 }
                 // Synchronous execution (original behavior)
-                const result = await executeCommand(command, cwd || process.cwd(), stdin, timeout || 300000, commandTitle);
+                const result = await executeCommand(command, cwd || process.cwd(), stdin, timeout, commandTitle);
                 // Save to history
                 const historyEntry = {
                     command,
