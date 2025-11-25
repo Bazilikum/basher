@@ -25,7 +25,7 @@ import { mkdirSync, existsSync, writeFileSync, readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { homedir } from 'os';
 import logger from './services/logger.config.js';
-import { HistoryManager } from './services/history-manager.js';
+import { HistoryManager, type HistoryManagerOptions } from './services/history-manager.js';
 import { executeCommand } from './services/command-executor.js';
 import { processManager } from './services/process-manager.js';
 import { WebServer } from './services/web-server.js';
@@ -101,9 +101,20 @@ function initializeDatabase(): string {
   return dbPath;
 }
 
-// Initialize history manager with project-specific database
+// Initialize history manager with project-specific database and cleanup options
 const dbPath = initializeDatabase();
-const historyManager = new HistoryManager(dbPath);
+
+// Configure cleanup limits from environment variables
+const historyOptions: HistoryManagerOptions = {
+  // Max entries: BASHER_MAX_ENTRIES env var, default 1000
+  maxEntries: process.env.BASHER_MAX_ENTRIES ? parseInt(process.env.BASHER_MAX_ENTRIES, 10) : 1000,
+  // Max age: BASHER_MAX_AGE_DAYS env var (in days), default 7 days
+  maxAgeMs: process.env.BASHER_MAX_AGE_DAYS
+    ? parseInt(process.env.BASHER_MAX_AGE_DAYS, 10) * 24 * 60 * 60 * 1000
+    : 7 * 24 * 60 * 60 * 1000,
+};
+
+const historyManager = new HistoryManager(dbPath, historyOptions);
 
 // Initialize web server (will start in main())
 let webServer: WebServer | null = null;

@@ -4,10 +4,18 @@
  */
 import type { CommandHistoryEntry } from '../types/index.js';
 import { AdvancedQueries } from './advanced-queries.js';
+export interface HistoryManagerOptions {
+    /** Maximum number of entries to keep (default: 1000) */
+    maxEntries?: number;
+    /** Maximum age of entries in milliseconds (default: 7 days) */
+    maxAgeMs?: number;
+}
 export declare class HistoryManager {
     private db;
     advanced: AdvancedQueries;
-    constructor(dbPath?: string);
+    private maxEntries;
+    private maxAgeMs;
+    constructor(dbPath?: string, options?: HistoryManagerOptions);
     private initDatabase;
     private migrateDatabase;
     /**
@@ -42,6 +50,14 @@ export declare class HistoryManager {
         total: number;
         failures: number;
         avgDuration: number;
+    };
+    /**
+     * Cleanup old entries based on maxEntries and maxAgeMs limits
+     * Removes entries that exceed either limit (whichever comes first)
+     */
+    cleanup(): {
+        deletedByAge: number;
+        deletedByCount: number;
     };
     /**
      * Clear all command history

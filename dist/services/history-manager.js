@@ -8,7 +8,10 @@ import { mkdirSync } from 'fs';
 import logger from './logger.config.js';
 import { AdvancedQueries } from './advanced-queries.js';
 export class HistoryManager {
-    constructor(dbPath = join(process.cwd(), 'data', 'command-history.db')) {
+    constructor(dbPath = join(process.cwd(), 'data', 'command-history.db'), options = {}) {
+        // Set cleanup limits with defaults
+        this.maxEntries = options.maxEntries ?? 1000;
+        this.maxAgeMs = options.maxAgeMs ?? 7 * 24 * 60 * 60 * 1000; // 7 days
         // Ensure data directory exists
         const dataDir = join(process.cwd(), 'data');
         try {
@@ -20,7 +23,13 @@ export class HistoryManager {
         this.db = new Database(dbPath);
         this.initDatabase();
         this.advanced = new AdvancedQueries(this.db);
-        logger.info({ dbPath }, 'History database initialized with advanced queries');
+        // Run cleanup on initialization
+        this.cleanup();
+        logger.info({
+            dbPath,
+            maxEntries: this.maxEntries,
+            maxAgeDays: Math.round(this.maxAgeMs / (24 * 60 * 60 * 1000))
+        }, 'History database initialized with auto-cleanup');
     }
     initDatabase() {
         // Create main history table (without new columns initially for compatibility)
@@ -101,6 +110,8 @@ export class HistoryManager {
             const result = stmt.run(entry.command, entry.title || entry.command, entry.cwd, entry.timestamp, entry.exitCode, entry.duration, entry.stdout, entry.stderr, entry.processId || null, entry.status || 'completed');
             const id = result.lastInsertRowid;
             logger.debug({ id, command: entry.command, title: entry.title, processId: entry.processId, status: entry.status }, 'Command saved to history');
+            // Run cleanup after each save (lightweight operation when nothing to clean)
+            this.cleanup();
             return id;
         }
         catch (error) {
@@ -263,6 +274,53 @@ export class HistoryManager {
         catch (error) {
             logger.error({ error }, 'Failed to get history stats');
             throw error;
+        }
+    }
+    /**
+     * Cleanup old entries based on maxEntries and maxAgeMs limits
+     * Removes entries that exceed either limit (whichever comes first)
+     */
+    cleanup() {
+        let deletedByAge = 0;
+        let deletedByCount = 0;
+        try {
+            // Delete entries older than maxAgeMs
+            const cutoffDate = new Date(Date.now() - this.maxAgeMs).toISOString();
+            const ageResult = this.db.prepare(`
+        DELETE FROM command_history
+        WHERE timestamp < ?
+      `).run(cutoffDate);
+            deletedByAge = ageResult.changes;
+            // Delete oldest entries if count exceeds maxEntries
+            const countResult = this.db.prepare(`
+        DELETE FROM command_history
+        WHERE id IN (
+          SELECT id FROM command_history
+          ORDER BY timestamp DESC
+          LIMIT -1 OFFSET ?
+        )
+      `).run(this.maxEntries);
+            deletedByCount = countResult.changes;
+            // Also clean up orphaned FTS entries
+            if (deletedByAge > 0 || deletedByCount > 0) {
+                this.db.exec(`
+          DELETE FROM command_history_fts
+          WHERE rowid NOT IN (SELECT id FROM command_history)
+        `);
+            }
+            if (deletedByAge > 0 || deletedByCount > 0) {
+                logger.info({
+                    deletedByAge,
+                    deletedByCount,
+                    maxEntries: this.maxEntries,
+                    maxAgeDays: Math.round(this.maxAgeMs / (24 * 60 * 60 * 1000))
+                }, 'History cleanup completed');
+            }
+            return { deletedByAge, deletedByCount };
+        }
+        catch (error) {
+            logger.error({ error }, 'Failed to cleanup history');
+            return { deletedByAge: 0, deletedByCount: 0 };
         }
     }
     /**
