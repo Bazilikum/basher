@@ -16,6 +16,7 @@ MCP server for executing shell commands with enhanced logging, history tracking,
 - **Execution Metadata**: Track duration, exit codes, timestamps, working directories, and process IDs
 - **Query Templates**: Pre-optimized queries for common patterns (failures, similar commands, command chains)
 - **Web UI Dashboard**: Real-time dashboard with SSE updates, search, and statistics
+- **Auto Port Detection**: Automatically finds available port and writes to `.basher/port` for multi-instance support
 - **VS Code Extension**: Fully integrated sidebar panel with live output streaming and custom titles
 - **Background Execution**: Commands run asynchronously by default with instant API responses
 - **Live Output Monitoring**: Watch command output in real-time with per-line timestamps
@@ -37,7 +38,7 @@ This command:
 - Configures it as an MCP server in Claude Code
 - Automatically creates a `.basher` folder in your project directory
 - Stores command history isolated per project
-- Sets up the web UI on port 3000
+- Sets up the web UI (auto-detects available port starting from 3000)
 - No manual cloning or building required
 
 **Verify installation:**
@@ -140,7 +141,17 @@ Set these in VS Code settings (`Cmd+,`):
 
 Basher automatically starts a web dashboard when the MCP server runs:
 
-**URL**: http://localhost:3000 (default, configurable via `WEB_PORT`)
+**URL**: http://localhost:3000 (default starting port, auto-increments if busy)
+
+#### Port Auto-Detection
+
+Basher automatically finds an available port:
+1. Starts from `WEB_PORT` environment variable (default: 3000)
+2. If that port is busy, tries the next port (3001, 3002, etc.)
+3. Writes the actual port to `.basher/port` file for the VS Code extension
+4. Logs the actual URL to console when server starts
+
+This allows running multiple Basher instances simultaneously without port conflicts.
 
 #### Dashboard Features
 
@@ -379,7 +390,7 @@ Configure Basher via environment variables in your MCP config:
 {
   "env": {
     "LOG_LEVEL": "debug",           // trace, debug, info, warn, error, fatal
-    "WEB_PORT": "3000",              // Web UI port (default: 3000)
+    "WEB_PORT": "3000",              // Starting port for web UI (auto-increments if busy)
     "DB_PATH": "./custom.db",        // Custom database location (optional)
     "BASHER_MAX_ENTRIES": "1000",    // Max commands to keep (default: 1000)
     "BASHER_MAX_AGE_DAYS": "7"       // Max age in days (default: 7)
@@ -446,13 +457,14 @@ Create `.mcp.json` in each project root:
 ```
 
 **What Happens Automatically:**
-- ✅ Each project gets its own `.basher/history.db` folder
-- ✅ `.basher/.gitignore` is auto-created to exclude database files
-- ✅ `.basher/port` file is created with the web server port number
-- ✅ VS Code extension automatically detects and uses the correct port per workspace
+- ✅ Each project gets its own `.basher/history.db` database
+- ✅ `.basher/.gitignore` is auto-created to exclude database and runtime files
+- ✅ `.basher/port` file is created with the actual web server port
+- ✅ Port auto-detection: if configured port is busy, finds next available
+- ✅ VS Code extension reads `.basher/port` to connect to correct instance
 - ✅ Command history is completely isolated per project
 - ✅ No manual path configuration needed
-- ✅ Just set unique `WEB_PORT` for each project
+- ✅ Multiple instances can run simultaneously without conflicts
 
 **Legacy DB_PATH Support:**
 
@@ -1282,7 +1294,7 @@ npm run watch
 ## Environment Variables
 
 - `LOG_LEVEL`: Logging level (default: `info`) - Options: `trace`, `debug`, `info`, `warn`, `error`, `fatal`
-- `WEB_PORT`: Web UI port (default: `3000`)
+- `WEB_PORT`: Starting port for web UI (default: `3000`, auto-increments if busy)
 - `BASHER_MAX_ENTRIES`: Maximum commands to keep in history (default: `1000`)
 - `BASHER_MAX_AGE_DAYS`: Maximum age in days for history entries (default: `7`)
 
