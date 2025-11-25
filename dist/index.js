@@ -109,7 +109,7 @@ const searchHistorySchema = z.object({
 });
 const getRecentCommandsSchema = z.object({
     limit: z.number().positive().optional().default(100),
-    outputFormat: z.enum(['json', 'toon']).optional().default('json'),
+    outputFormat: z.enum(['json', 'toon']).optional().default('toon'),
 });
 // Create MCP server
 const server = new Server({
@@ -182,7 +182,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             {
                 name: 'get_recent_commands',
-                description: 'Retrieve the most recent command executions from history. Returns commands in reverse chronological order with full execution details. Supports Toon format for ~40% token savings.',
+                description: 'Retrieve the most recent command executions from history. Returns commands in reverse chronological order with full execution details. Returns Toon format by default for ~40% token savings.',
                 inputSchema: {
                     type: 'object',
                     properties: {
@@ -193,7 +193,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         outputFormat: {
                             type: 'string',
                             enum: ['json', 'toon'],
-                            description: 'Output format: "json" (default) or "toon" (~40% fewer tokens for tabular data)',
+                            description: 'Output format: "toon" (default, ~40% fewer tokens for tabular data) or "json"',
                         },
                     },
                 },
@@ -298,7 +298,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         outputFormat: {
                             type: 'string',
                             enum: ['json', 'toon'],
-                            description: 'Output format: "json" (default) or "toon" (~40% fewer tokens). Toon works best with "summary" outputLevel for maximum savings.',
+                            description: 'Output format: "toon" (default, ~40% fewer tokens) or "json". Toon works best with "summary" outputLevel for maximum savings.',
                         },
                         contextLines: {
                             type: 'number',
@@ -800,7 +800,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 query: z.string().min(1),
                 limit: z.number().positive().optional().default(50),
                 outputLevel: z.enum(['summary', 'preview', 'excerpts', 'full']).optional().default('excerpts'),
-                outputFormat: z.enum(['json', 'toon']).optional().default('json'),
+                outputFormat: z.enum(['json', 'toon']).optional().default('toon'),
                 contextLines: z.number().positive().optional().default(3),
                 filters: z.object({
                     dateRange: z.object({
