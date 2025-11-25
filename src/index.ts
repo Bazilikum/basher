@@ -513,11 +513,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             processId: result.processId,
             status: 'completed',
           };
-          historyManager.saveCommand(historyEntry);
+          const commandId = historyManager.saveCommand(historyEntry);
 
           // Broadcast to web UI clients
           if (webServer) {
-            webServer.broadcast('command_executed', historyEntry);
+            webServer.broadcast('command_executed', { ...historyEntry, id: commandId });
           }
         }).catch(error => {
           logger.error({ error, command }, 'Background command failed');
@@ -562,11 +562,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         processId: result.processId,
         status: 'completed',
       };
-      historyManager.saveCommand(historyEntry);
+      const commandId = historyManager.saveCommand(historyEntry);
 
       // Broadcast to web UI clients
       if (webServer) {
-        webServer.broadcast('command_executed', historyEntry);
+        webServer.broadcast('command_executed', { ...historyEntry, id: commandId });
       }
 
       return {
@@ -575,6 +575,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             type: 'text',
             text: JSON.stringify(
               {
+                id: commandId,
                 command,
                 processId: result.processId,
                 exitCode: result.exitCode,
