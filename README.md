@@ -9,7 +9,7 @@ MCP server for executing shell commands with enhanced logging, history tracking,
 - **Token-Efficient Querying**: 90-95% token savings with tiered output levels (summary, preview, excerpts, full)
 - **Advanced Filtering**: Multi-criteria search with date ranges, exit codes, duration, patterns, and more
 - **Structured Logging**: JSON-formatted logs using Pino for better observability
-- **Persistent History**: SQLite database stores all command executions with FTS5 full-text search
+- **Persistent History**: SQLite database stores all command executions with FTS5 full-text search and automatic cleanup
 - **Smart Search**: Full-text search across commands, stdout, and stderr with context-aware excerpts
 - **Aggregations & Analytics**: Group and analyze commands by type, directory, time, or exit code
 - **Output Comparison**: Diff mode to compare outputs between two command executions
@@ -164,7 +164,7 @@ The web server also provides a REST API:
     - `title` (optional): Human-readable title for the command
     - `cwd` (optional): Working directory
     - `background` (optional, default: `true`): Run in background
-    - `timeout` (optional, default: `300000`): Timeout in milliseconds
+    - `timeout` (optional): Timeout in milliseconds (no timeout by default)
 
   **Background Execution (default)**:
   ```bash
@@ -240,11 +240,12 @@ The web server also provides a REST API:
 ##### History & Search
 
 - `GET /api/history?limit=100` - Recent command history
+- `GET /api/history/:id` - Get specific command by ID
 - `GET /api/search?q=error` - Full-text search
 - `GET /api/stats` - Execution statistics
 - `GET /api/logs?limit=100` - Structured logs
 - `GET /api/events` - Server-Sent Events stream
-- `DELETE /api/history` - Clear history
+- `DELETE /api/history` - Clear all history
 
 **Example**: Check statistics from the command line:
 ```bash
@@ -377,9 +378,29 @@ Configure Basher via environment variables in your MCP config:
 ```json
 {
   "env": {
-    "LOG_LEVEL": "debug",     // trace, debug, info, warn, error, fatal
-    "WEB_PORT": "3000",        // Web UI port (default: 3000)
-    "DB_PATH": "./custom.db"   // Custom database location (optional)
+    "LOG_LEVEL": "debug",           // trace, debug, info, warn, error, fatal
+    "WEB_PORT": "3000",              // Web UI port (default: 3000)
+    "DB_PATH": "./custom.db",        // Custom database location (optional)
+    "BASHER_MAX_ENTRIES": "1000",    // Max commands to keep (default: 1000)
+    "BASHER_MAX_AGE_DAYS": "7"       // Max age in days (default: 7)
+  }
+}
+```
+
+#### Auto-Cleanup
+
+Basher automatically cleans up old command history to prevent unbounded database growth. Cleanup runs on startup and after each command execution.
+
+- **By count**: Keeps only the most recent N commands (default: 1000)
+- **By age**: Removes commands older than N days (default: 7)
+- Whichever limit is hit first triggers cleanup
+
+Example for a smaller, faster database:
+```json
+{
+  "env": {
+    "BASHER_MAX_ENTRIES": "500",
+    "BASHER_MAX_AGE_DAYS": "3"
   }
 }
 ```
@@ -456,7 +477,7 @@ Execute a shell command with enhanced logging and automatic history tracking.
 - `command` (string, required): The shell command to execute
 - `cwd` (string, optional): Working directory for execution
 - `stdin` (string, optional): Input to pipe to the command
-- `timeout` (number, optional): Timeout in milliseconds (default: 300000ms / 5 minutes)
+- `timeout` (number, optional): Timeout in milliseconds (no timeout by default)
 - `background` (boolean, optional): Run in background (default: true). Set to false for synchronous execution
 - `title` (string, optional): Human-readable title for the command
 
@@ -576,7 +597,76 @@ Get statistics about command execution history.
 }
 ```
 
-### 5. terminate_command
+### 5. get_command_by_id
+
+Retrieve a specific command execution by its ID from the history database. Returns complete execution details including stdout, stderr, exit code, duration, and metadata.
+
+**Parameters:**
+- `commandId` (number, required): The ID of the command to retrieve
+
+**Example:**
+```typescript
+{
+  "commandId": 42
+}
+```
+
+**Returns:**
+```json
+{
+  "id": 42,
+  "command": "npm test",
+  "title": "Running Tests",
+  "cwd": "/home/user/project",
+  "timestamp": "2025-01-17T10:30:00.000Z",
+  "exitCode": 0,
+  "duration": "1234ms",
+  "success": true,
+  "processId": 12345,
+  "status": "completed",
+  "stdout": "...",
+  "stderr": "",
+  "stdoutLength": 5000,
+  "stderrLength": 0
+}
+```
+
+### 6. clear_history
+
+Clear all command history from the database. This permanently deletes all stored command executions and cannot be undone. Use with caution.
+
+**Example:**
+```typescript
+{}
+```
+
+**Returns:**
+```json
+{
+  "success": true,
+  "message": "Command history cleared successfully. All stored command executions have been permanently deleted."
+}
+```
+
+### 7. get_version
+
+Get the current version of Basher MCP server including name, version number, and description.
+
+**Example:**
+```typescript
+{}
+```
+
+**Returns:**
+```json
+{
+  "name": "basher",
+  "version": "1.4.0",
+  "description": "Basher - MCP server for executing commands with enhanced logging, history tracking, and improved visibility"
+}
+```
+
+### 8. terminate_command
 
 Terminate a running command by its process ID. Sends SIGTERM for graceful shutdown, followed by SIGKILL after 5 seconds if the process is still running.
 
@@ -599,7 +689,7 @@ Terminate a running command by its process ID. Sends SIGTERM for graceful shutdo
 }
 ```
 
-### 6. get_running_commands
+### 9. get_running_commands
 
 Get a list of all currently running commands with their process IDs, command text, and duration.
 
@@ -624,7 +714,7 @@ Get a list of all currently running commands with their process IDs, command tex
 ```
 
 
-### 7. get_process_output
+### 10. get_process_output
 
 Get the current output (stdout/stderr) from a running command by process ID. Essential for monitoring long-running commands and enabling AI self-monitoring. Returns the last N lines if specified, or all output.
 
@@ -660,7 +750,7 @@ Get the current output (stdout/stderr) from a running command by process ID. Ess
 - AI self-monitoring: periodically check output to decide next actions
 - Debug hanging processes by examining recent output
 
-### 8. advanced_search
+### 11. advanced_search
 
 Search command history with advanced filtering and tiered output levels for maximum token efficiency. Use `outputLevel` to control response size and save tokens.
 
@@ -727,7 +817,7 @@ Search command history with advanced filtering and tiered output levels for maxi
 }
 ```
 
-### 9. get_aggregations
+### 12. get_aggregations
 
 Get aggregated statistics grouped by command, directory, exit code, or time. Returns counts, averages, and success rates in a single query - much more token-efficient than multiple searches.
 
@@ -769,7 +859,7 @@ Get aggregated statistics grouped by command, directory, exit code, or time. Ret
 }
 ```
 
-### 10. compare_executions
+### 13. compare_executions
 
 Compare output differences between two command executions. Shows added, removed, and common lines for both stdout and stderr.
 
@@ -809,7 +899,7 @@ Compare output differences between two command executions. Shows added, removed,
 }
 ```
 
-### 11. get_last_failures
+### 14. get_last_failures
 
 Quick access to recent failed commands. Token-efficient alternative to searching with exitCode filter.
 
@@ -846,7 +936,7 @@ Quick access to recent failed commands. Token-efficient alternative to searching
 }
 ```
 
-### 12. get_similar_commands
+### 15. get_similar_commands
 
 Find commands similar to a given command (same base command and working directory). Useful for tracking patterns and history.
 
@@ -885,7 +975,7 @@ Find commands similar to a given command (same base command and working director
 }
 ```
 
-### 13. get_command_chain
+### 16. get_command_chain
 
 Get a sequence of commands executed in the same working directory around a specific command. Useful for understanding command context and workflows.
 
@@ -1193,6 +1283,8 @@ npm run watch
 
 - `LOG_LEVEL`: Logging level (default: `info`) - Options: `trace`, `debug`, `info`, `warn`, `error`, `fatal`
 - `WEB_PORT`: Web UI port (default: `3000`)
+- `BASHER_MAX_ENTRIES`: Maximum commands to keep in history (default: `1000`)
+- `BASHER_MAX_AGE_DAYS`: Maximum age in days for history entries (default: `7`)
 
 ## License
 
