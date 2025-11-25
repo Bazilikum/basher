@@ -340,10 +340,6 @@ export class WebServer {
                 logger.info({ clientCount: this.sseClients.length }, 'SSE client disconnected');
             });
         });
-        // Health check
-        this.app.get('/health', (req, res) => {
-            res.json({ status: 'ok', timestamp: new Date().toISOString() });
-        });
     }
     /**
      * Broadcast an event to all connected SSE clients
@@ -401,8 +397,7 @@ export class WebServer {
             this.server = this.app.listen(this.port, () => {
                 logger.info({ port: this.port }, 'Web UI started');
                 console.log(`\n🌐 Web UI available at: http://localhost:${this.port}\n`);
-                // Write port number to file for VS Code extension to read
-                this.writePortFile();
+                // Note: Port file is now written by InstanceDetector for singleton pattern support
                 resolve();
             });
         });

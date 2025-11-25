@@ -22,6 +22,7 @@ import { HistoryManager } from './services/history-manager.js';
 import { executeCommand } from './services/command-executor.js';
 import { processManager } from './services/process-manager.js';
 import { WebServer } from './services/web-server.js';
+import { InstanceDetector } from './services/instance-detector.js';
 import { encodeOutput } from './utils/toon-encoder.js';
 // Read package.json for version info
 const packageJsonPath = join(dirname(fileURLToPath(import.meta.url)), '..', 'package.json');
@@ -57,7 +58,8 @@ function determineProjectPath() {
 function initializeDatabase() {
     // Legacy support: if DB_PATH is explicitly set, use it directly
     if (process.env.DB_PATH) {
-        return process.env.DB_PATH;
+        const basherDir = dirname(process.env.DB_PATH);
+        return { dbPath: process.env.DB_PATH, basherDir };
     }
     const projectPath = determineProjectPath();
     if (!projectPath) {
@@ -71,16 +73,16 @@ function initializeDatabase() {
         // Create .gitignore to exclude database files and runtime files from version control
         const gitignorePath = join(basherDir, '.gitignore');
         if (!existsSync(gitignorePath)) {
-            writeFileSync(gitignorePath, '*.db\n*.db-shm\n*.db-wal\nport\n');
+            writeFileSync(gitignorePath, '*.db\n*.db-shm\n*.db-wal\nport\npid\n');
             logger.info('Created .basher/.gitignore');
         }
     }
     const dbPath = join(basherDir, 'history.db');
     logger.info({ projectPath, dbPath }, 'Database initialized for project');
-    return dbPath;
+    return { dbPath, basherDir };
 }
 // Initialize history manager with project-specific database and cleanup options
-const dbPath = initializeDatabase();
+const { dbPath, basherDir } = initializeDatabase();
 // Configure cleanup limits from environment variables
 const historyOptions = {
     // Max entries: BASHER_MAX_ENTRIES env var, default 1000
@@ -91,8 +93,14 @@ const historyOptions = {
         : 7 * 24 * 60 * 60 * 1000,
 };
 const historyManager = new HistoryManager(dbPath, historyOptions);
-// Initialize web server (will start in main())
+// Instance detector for singleton pattern
+const instanceDetector = new InstanceDetector({ basherDir });
+// Track whether this instance is the primary (web server owner)
+let isPrimaryInstance = false;
+// Initialize web server (will start in main() if primary instance)
 let webServer = null;
+// Track existing instance info (when running in client mode)
+let existingInstanceInfo = null;
 // Zod schemas for input validation
 const executeCommandSchema = z.object({
     command: z.string().min(1, 'Command cannot be empty'),
@@ -999,23 +1007,51 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 // Start server
 async function main() {
     try {
-        // Start web UI server
         const webPort = parseInt(process.env.WEB_PORT || '3000');
-        webServer = new WebServer(historyManager, webPort);
-        await webServer.start();
-        // Start MCP server on stdio
+        // Check for existing Basher instance (singleton pattern)
+        existingInstanceInfo = await instanceDetector.checkExistingInstance();
+        if (existingInstanceInfo) {
+            // Another instance is already running - run in client mode (no web server)
+            isPrimaryInstance = false;
+            logger.info({
+                existingPort: existingInstanceInfo.port,
+                existingPid: existingInstanceInfo.pid,
+            }, 'Existing Basher instance detected, running in client mode (shared web server)');
+            console.log(`\n🔗 Connected to existing Basher instance at: http://localhost:${existingInstanceInfo.port}\n`);
+        }
+        else {
+            // No existing instance - become the primary instance with web server
+            isPrimaryInstance = true;
+            webServer = new WebServer(historyManager, webPort);
+            await webServer.start();
+            // Write instance files for other terminals to detect
+            instanceDetector.writeInstanceFiles(webServer.getPort());
+            logger.info({
+                name: packageJson.name,
+                version: packageJson.version,
+                webPort: webServer.getPort(),
+                isPrimary: true,
+            }, 'Basher MCP server started as primary instance');
+        }
+        // Start MCP server on stdio (always starts, regardless of primary/client mode)
         const transport = new StdioServerTransport();
         await server.connect(transport);
         logger.info({
             name: packageJson.name,
             version: packageJson.version,
-            webPort,
+            isPrimaryInstance,
+            webPort: isPrimaryInstance ? webServer?.getPort() : existingInstanceInfo?.port,
         }, 'Basher MCP server started successfully');
         // Graceful shutdown
         const shutdown = async () => {
-            logger.info('Shutting down gracefully...');
-            if (webServer) {
-                await webServer.stop();
+            logger.info({ isPrimaryInstance }, 'Shutting down gracefully...');
+            if (isPrimaryInstance) {
+                // Primary instance: stop web server and clean up instance files
+                if (webServer) {
+                    await webServer.stop();
+                }
+                instanceDetector.cleanup();
+                logger.info('Primary instance shutdown complete, instance files cleaned up');
             }
             historyManager.close();
             process.exit(0);

@@ -17,6 +17,7 @@ MCP server for executing shell commands with enhanced logging, history tracking,
 - **Query Templates**: Pre-optimized queries for common patterns (failures, similar commands, command chains)
 - **Web UI Dashboard**: Real-time dashboard with SSE updates, search, and statistics
 - **Auto Port Detection**: Automatically finds available port and writes to `.basher/port` for multi-instance support
+- **Singleton Pattern**: Multiple Claude terminals share a single Basher instance - subsequent terminals detect the existing server and connect to it
 - **VS Code Extension**: Fully integrated sidebar panel with live output streaming and custom titles
 - **Background Execution**: Commands run asynchronously by default with instant API responses
 - **Live Output Monitoring**: Watch command output in real-time with per-line timestamps
@@ -143,15 +144,29 @@ Basher automatically starts a web dashboard when the MCP server runs:
 
 **URL**: http://localhost:3000 (default starting port, auto-increments if busy)
 
-#### Port Auto-Detection
+#### Port Auto-Detection & Multi-Terminal Support
 
-Basher automatically finds an available port:
+Basher uses a **singleton pattern** to support multiple Claude terminals sharing a single web server instance:
+
+**First Terminal (Primary Instance)**:
 1. Starts from `WEB_PORT` environment variable (default: 3000)
 2. If that port is busy, tries the next port (3001, 3002, etc.)
-3. Writes the actual port to `.basher/port` file for the VS Code extension
-4. Logs the actual URL to console when server starts
+3. Writes the port and PID to `.basher/port` and `.basher/pid` files
+4. Starts the web server and MCP server
+5. Shows: `🌐 Web UI available at: http://localhost:3000`
 
-This allows running multiple Basher instances simultaneously without port conflicts.
+**Subsequent Terminals (Client Mode)**:
+1. Detects existing instance via health check on the port file
+2. Skips starting web server (uses existing one)
+3. Starts only the MCP server (all tools work normally)
+4. Shows: `🔗 Connected to existing Basher instance at: http://localhost:3000`
+
+**Benefits**:
+- All Claude terminals share the same command history and web dashboard
+- No port conflicts or resource duplication
+- Web UI shows commands from all terminals in real-time
+- When primary instance shuts down, instance files are cleaned up automatically
+- Next terminal to start becomes the new primary instance
 
 #### Dashboard Features
 
