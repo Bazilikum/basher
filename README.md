@@ -522,31 +522,83 @@ Execute a shell command with enhanced logging and automatic history tracking.
 - `timeout` (number, optional): Timeout in milliseconds (no timeout by default)
 - `background` (boolean, optional): Run in background (default: true). Set to false for synchronous execution
 - `title` (string, optional): Human-readable title for the command
+- `waitFor` (string, optional): **NEW in v1.7** - Regex pattern to wait for in output. Returns immediately when pattern matches. Use this instead of polling!
+- `waitTimeout` (number, optional): Timeout for waitFor in ms (default: 30000)
 
-**Important:**
-> ⚠️ **Do NOT use for sleep/wait commands with default background execution** - they return immediately without waiting. For sleep/wait commands, set `background: false`.
+**Execution Modes:**
 
-**Example:**
+| Mode | Parameters | Behavior |
+|------|------------|----------|
+| Background | `background: true` (default) | Returns immediately with `processId` |
+| Synchronous | `background: false` | Waits for command to complete |
+| Wait for Pattern | `waitFor: "pattern"` | Waits until pattern matches in output |
+
+**Example 1: Background (returns processId immediately)**
+```typescript
+{ "command": "npm run build" }
+```
+```json
+{
+  "status": "running",
+  "processId": 5,
+  "command": "npm run build",
+  "message": "Command started in background."
+}
+```
+
+**Example 2: Wait for specific output (most efficient for monitoring)**
+```typescript
+{
+  "command": "npm run dev",
+  "waitFor": "Listening on port",
+  "waitTimeout": 60000
+}
+```
+```json
+{
+  "status": "pattern_matched",
+  "processId": 6,
+  "pattern": "Listening on port",
+  "matchedLine": "[10:30:00] Listening on port 3000",
+  "matchedStream": "stdout",
+  "stillRunning": true,
+  "message": "Pattern matched. Command may still be running."
+}
+```
+
+**Example 3: Wait for test results**
+```typescript
+{
+  "command": "npm test",
+  "waitFor": "(PASS|FAIL|Error)",
+  "waitTimeout": 120000
+}
+```
+
+**Example 4: Synchronous (wait for completion)**
 ```typescript
 {
   "command": "ls -la",
-  "cwd": "/home/user",
-  "timeout": 60000
+  "background": false
 }
 ```
-
-**Returns:**
 ```json
 {
-  "command": "ls -la",
+  "status": "completed",
+  "processId": 7,
   "exitCode": 0,
   "duration": "42ms",
-  "timestamp": "2025-01-17T10:30:00.000Z",
   "stdout": "...",
-  "stderr": "",
   "success": true
 }
 ```
+
+**waitFor Response Statuses:**
+- `pattern_matched`: Pattern found in output, command may still be running
+- `completed_without_match`: Command finished but pattern never matched
+- `timeout`: waitTimeout reached, command may still be running
+
+> 💡 **Pro tip**: Use `waitFor` instead of polling `get_process_output` repeatedly. One tool call replaces many!
 
 ### 2. search_command_history
 
@@ -703,7 +755,7 @@ Get the current version of Basher MCP server including name, version number, and
 ```json
 {
   "name": "basher",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "description": "Basher - MCP server for executing commands with enhanced logging, history tracking, and improved visibility"
 }
 ```

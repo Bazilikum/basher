@@ -112,6 +112,8 @@ const executeCommandSchema = z.object({
     timeout: z.number().positive().optional(),
     background: z.boolean().optional().default(true),
     title: z.string().optional(),
+    waitFor: z.string().optional(), // Regex pattern to wait for in output
+    waitTimeout: z.number().positive().optional().default(30000), // Timeout for waitFor in ms
 });
 const searchHistorySchema = z.object({
     query: z.string().min(1, 'Query cannot be empty'),
@@ -137,7 +139,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         tools: [
             {
                 name: 'execute_command',
-                description: 'PREFERRED TOOL FOR ALL COMMAND EXECUTION. Execute shell commands with comprehensive tracking and analysis: (1) Persistent SQLite history with full-text search across all past executions, (2) Per-line timestamps for precise debugging, (3) Process tracking with termination capabilities, (4) Token-efficient querying with 90-95% savings using summary/excerpts modes, (5) Advanced filtering and aggregation for pattern analysis, (6) Real-time web UI dashboard at localhost:3000. Every command execution is automatically saved and becomes searchable. Use this instead of standard bash for all command execution to ensure complete observability and the ability to search, compare, and analyze past runs. IMPORTANT: Do NOT use for sleep/wait commands with default background execution (they return immediately). For sleep/wait commands, set background=false.',
+                description: 'PREFERRED TOOL FOR ALL COMMAND EXECUTION. Execute shell commands with comprehensive tracking and analysis: (1) Persistent SQLite history with full-text search across all past executions, (2) Per-line timestamps for precise debugging, (3) Process tracking with termination capabilities, (4) Token-efficient querying with 90-95% savings using summary/excerpts modes, (5) Advanced filtering and aggregation for pattern analysis, (6) Real-time web UI dashboard at localhost:3000. Every command execution is automatically saved and becomes searchable. Use this instead of standard bash for all command execution to ensure complete observability and the ability to search, compare, and analyze past runs. IMPORTANT: Do NOT use for sleep/wait commands with default background execution (they return immediately). For sleep/wait commands, set background=false or use waitFor parameter.',
                 inputSchema: {
                     type: 'object',
                     properties: {
@@ -164,6 +166,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         title: {
                             type: 'string',
                             description: 'Optional title/label for this command execution (useful for identifying commands in history)',
+                        },
+                        waitFor: {
+                            type: 'string',
+                            description: 'Regex pattern to wait for in stdout/stderr. When matched, returns immediately with the match context. Use this instead of polling get_process_output. Example: "Listening on port" or "(PASS|FAIL)".',
+                        },
+                        waitTimeout: {
+                            type: 'number',
+                            description: 'Timeout in ms for waitFor pattern (default: 30000). If pattern not matched within timeout, returns with timeout status.',
                         },
                     },
                     required: ['command'],
@@ -462,96 +472,257 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         // Execute command
         if (name === 'execute_command') {
             const params = executeCommandSchema.parse(args);
-            const { command, cwd, stdin, timeout, background, title } = params;
-            logger.info({ command, cwd, timeout, background, title }, 'Executing command via MCP tool');
-            // Set up callbacks for secondary instances to notify primary
-            const callbacks = instanceNotifier ? {
-                onStart: (processId, cmd, cmdTitle, cmdCwd) => {
-                    instanceNotifier.notifyCommandStart(processId, cmd, cmdTitle, cmdCwd);
-                },
-                onStdout: (processId, data) => {
-                    instanceNotifier.notifyCommandOutput(processId, 'stdout', data);
-                },
-                onStderr: (processId, data) => {
-                    instanceNotifier.notifyCommandOutput(processId, 'stderr', data);
-                },
-            } : undefined;
-            // If background mode (default), return immediately with processId
-            if (background) {
-                // Execute in background (don't await)
-                executeCommand(command, cwd, stdin, timeout, title, callbacks).then(result => {
-                    // Save to history when complete
-                    const historyEntry = {
-                        command,
-                        title: title || command,
-                        cwd: cwd || process.cwd(),
-                        timestamp: result.timestamp,
-                        exitCode: result.exitCode,
-                        duration: result.duration,
-                        stdout: result.stdout,
-                        stderr: result.stderr,
-                        processId: result.processId,
-                        status: 'completed',
-                    };
-                    const commandId = historyManager.saveCommand(historyEntry);
-                    // Broadcast to web UI clients (primary instance)
-                    if (webServer) {
-                        webServer.broadcast('command_executed', { ...historyEntry, id: commandId });
-                    }
-                    // Notify primary instance (secondary instance)
-                    if (instanceNotifier) {
-                        instanceNotifier.notifyCommandComplete(result.processId, command, title || command, cwd || process.cwd(), result.exitCode, result.duration, result.stdout, result.stderr, commandId);
+            const { command, cwd, stdin, timeout, background, title, waitFor, waitTimeout } = params;
+            logger.info({ command, cwd, timeout, background, title, waitFor, waitTimeout }, 'Executing command via MCP tool');
+            // Shared state for capturing processId and output
+            let capturedProcessId = null;
+            let accumulatedStdout = '';
+            let accumulatedStderr = '';
+            // Helper to save completed command to history and broadcast
+            const saveAndBroadcast = (result) => {
+                const historyEntry = {
+                    command,
+                    title: title || command,
+                    cwd: cwd || process.cwd(),
+                    timestamp: result.timestamp,
+                    exitCode: result.exitCode,
+                    duration: result.duration,
+                    stdout: result.stdout,
+                    stderr: result.stderr,
+                    processId: result.processId,
+                    status: 'completed',
+                };
+                const commandId = historyManager.saveCommand(historyEntry);
+                if (webServer) {
+                    webServer.broadcast('command_executed', { ...historyEntry, id: commandId });
+                }
+                if (instanceNotifier) {
+                    instanceNotifier.notifyCommandComplete(result.processId, command, title || command, cwd || process.cwd(), result.exitCode, result.duration, result.stdout, result.stderr, commandId);
+                }
+                return commandId;
+            };
+            // ============================================
+            // MODE 1: waitFor - wait for pattern in output
+            // ============================================
+            if (waitFor) {
+                const regex = new RegExp(waitFor);
+                let patternMatched = false;
+                let matchedLine = null;
+                let matchedStream = null;
+                let resolveWait = null;
+                // Set up callbacks with pattern matching
+                const callbacks = {
+                    onStart: (processId, cmd, cmdTitle, cmdCwd) => {
+                        capturedProcessId = processId;
+                        if (instanceNotifier) {
+                            instanceNotifier.notifyCommandStart(processId, cmd, cmdTitle, cmdCwd);
+                        }
+                    },
+                    onStdout: (processId, data) => {
+                        accumulatedStdout += data;
+                        if (instanceNotifier) {
+                            instanceNotifier.notifyCommandOutput(processId, 'stdout', data);
+                        }
+                        // Check for pattern match
+                        if (!patternMatched && regex.test(data)) {
+                            patternMatched = true;
+                            matchedLine = data.trim();
+                            matchedStream = 'stdout';
+                            if (resolveWait) {
+                                resolveWait({ type: 'pattern_matched' });
+                            }
+                        }
+                    },
+                    onStderr: (processId, data) => {
+                        accumulatedStderr += data;
+                        if (instanceNotifier) {
+                            instanceNotifier.notifyCommandOutput(processId, 'stderr', data);
+                        }
+                        // Check for pattern match
+                        if (!patternMatched && regex.test(data)) {
+                            patternMatched = true;
+                            matchedLine = data.trim();
+                            matchedStream = 'stderr';
+                            if (resolveWait) {
+                                resolveWait({ type: 'pattern_matched' });
+                            }
+                        }
+                    },
+                };
+                // Start command execution (don't await - we want to monitor as it runs)
+                const commandPromise = executeCommand(command, cwd, stdin, timeout, title, callbacks);
+                // Set up completion handler
+                commandPromise.then(result => {
+                    saveAndBroadcast(result);
+                    if (!patternMatched && resolveWait) {
+                        resolveWait({ type: 'completed', result });
                     }
                 }).catch(error => {
+                    logger.error({ error, command }, 'Command failed during waitFor');
+                    if (resolveWait) {
+                        resolveWait({ type: 'error', error });
+                    }
+                });
+                // Wait for pattern match, completion, or timeout
+                const waitResult = await Promise.race([
+                    new Promise((resolve) => {
+                        resolveWait = resolve;
+                        // Check if pattern already matched (from sync callbacks)
+                        if (patternMatched) {
+                            resolve({ type: 'pattern_matched' });
+                        }
+                    }),
+                    new Promise((resolve) => {
+                        setTimeout(() => resolve({ type: 'timeout' }), waitTimeout);
+                    }),
+                ]);
+                // Get last N lines of output for context
+                const getLastLines = (text, n = 10) => {
+                    const lines = text.split('\n').filter(l => l.trim());
+                    return lines.slice(-n).join('\n');
+                };
+                if (waitResult.type === 'pattern_matched') {
+                    return {
+                        content: [{
+                                type: 'text',
+                                text: JSON.stringify({
+                                    status: 'pattern_matched',
+                                    processId: capturedProcessId,
+                                    command,
+                                    pattern: waitFor,
+                                    matchedLine,
+                                    matchedStream,
+                                    stillRunning: processManager.isRunning(capturedProcessId),
+                                    outputTail: getLastLines(accumulatedStdout + accumulatedStderr),
+                                    message: 'Pattern matched. Command may still be running.',
+                                }, null, 2),
+                            }],
+                    };
+                }
+                else if (waitResult.type === 'completed') {
+                    const result = waitResult.result;
+                    return {
+                        content: [{
+                                type: 'text',
+                                text: JSON.stringify({
+                                    status: 'completed_without_match',
+                                    processId: result.processId,
+                                    command,
+                                    pattern: waitFor,
+                                    exitCode: result.exitCode,
+                                    duration: `${result.duration}ms`,
+                                    success: result.exitCode === 0,
+                                    stdout: result.stdout,
+                                    stderr: result.stderr,
+                                    message: 'Command completed but pattern was not matched.',
+                                }, null, 2),
+                            }],
+                    };
+                }
+                else if (waitResult.type === 'timeout') {
+                    return {
+                        content: [{
+                                type: 'text',
+                                text: JSON.stringify({
+                                    status: 'timeout',
+                                    processId: capturedProcessId,
+                                    command,
+                                    pattern: waitFor,
+                                    waitTimeout,
+                                    stillRunning: capturedProcessId ? processManager.isRunning(capturedProcessId) : false,
+                                    outputTail: getLastLines(accumulatedStdout + accumulatedStderr),
+                                    message: `Pattern not matched within ${waitTimeout}ms. Command may still be running.`,
+                                }, null, 2),
+                            }],
+                    };
+                }
+                else {
+                    return {
+                        content: [{
+                                type: 'text',
+                                text: JSON.stringify({
+                                    status: 'error',
+                                    command,
+                                    error: String(waitResult.error),
+                                }, null, 2),
+                            }],
+                    };
+                }
+            }
+            // ============================================
+            // MODE 2: background - fire and return processId
+            // ============================================
+            if (background) {
+                // Set up callbacks that capture processId
+                const callbacks = {
+                    onStart: (processId, cmd, cmdTitle, cmdCwd) => {
+                        capturedProcessId = processId;
+                        if (instanceNotifier) {
+                            instanceNotifier.notifyCommandStart(processId, cmd, cmdTitle, cmdCwd);
+                        }
+                    },
+                    onStdout: (processId, data) => {
+                        if (instanceNotifier) {
+                            instanceNotifier.notifyCommandOutput(processId, 'stdout', data);
+                        }
+                    },
+                    onStderr: (processId, data) => {
+                        if (instanceNotifier) {
+                            instanceNotifier.notifyCommandOutput(processId, 'stderr', data);
+                        }
+                    },
+                };
+                // Execute in background (don't await)
+                executeCommand(command, cwd, stdin, timeout, title, callbacks)
+                    .then(saveAndBroadcast)
+                    .catch(error => {
                     logger.error({ error, command }, 'Background command failed');
                 });
-                // Return immediately with processId
-                // Note: We need to get the processId before the command completes
-                // The processId is assigned synchronously when the process starts
+                // Small delay to ensure onStart callback has fired
+                await new Promise(resolve => setImmediate(resolve));
                 return {
-                    content: [
-                        {
+                    content: [{
                             type: 'text',
                             text: JSON.stringify({
+                                status: 'running',
                                 background: true,
-                                message: 'Command started in background. Use get_process_output or get_running_commands to monitor progress.',
+                                processId: capturedProcessId,
                                 command,
                                 cwd: cwd || process.cwd(),
-                                note: 'Process will be tracked and saved to history upon completion. Use get_running_commands to get the processId.',
+                                message: 'Command started in background.',
+                                hint: 'Use get_process_output with this processId to monitor progress, or use waitFor parameter next time to wait for specific output.',
                             }, null, 2),
-                        },
-                    ],
+                        }],
                 };
             }
-            // Synchronous execution (original behavior)
-            const result = await executeCommand(command, cwd, stdin, timeout, title, callbacks);
-            // Save to history
-            const historyEntry = {
-                command,
-                title: title || command,
-                cwd: cwd || process.cwd(),
-                timestamp: result.timestamp,
-                exitCode: result.exitCode,
-                duration: result.duration,
-                stdout: result.stdout,
-                stderr: result.stderr,
-                processId: result.processId,
-                status: 'completed',
+            // ============================================
+            // MODE 3: synchronous - wait for completion
+            // ============================================
+            const callbacks = {
+                onStart: (processId, cmd, cmdTitle, cmdCwd) => {
+                    capturedProcessId = processId;
+                    if (instanceNotifier) {
+                        instanceNotifier.notifyCommandStart(processId, cmd, cmdTitle, cmdCwd);
+                    }
+                },
+                onStdout: (processId, data) => {
+                    if (instanceNotifier) {
+                        instanceNotifier.notifyCommandOutput(processId, 'stdout', data);
+                    }
+                },
+                onStderr: (processId, data) => {
+                    if (instanceNotifier) {
+                        instanceNotifier.notifyCommandOutput(processId, 'stderr', data);
+                    }
+                },
             };
-            const commandId = historyManager.saveCommand(historyEntry);
-            // Broadcast to web UI clients (primary instance)
-            if (webServer) {
-                webServer.broadcast('command_executed', { ...historyEntry, id: commandId });
-            }
-            // Notify primary instance (secondary instance)
-            if (instanceNotifier) {
-                instanceNotifier.notifyCommandComplete(result.processId, command, title || command, cwd || process.cwd(), result.exitCode, result.duration, result.stdout, result.stderr, commandId);
-            }
+            const result = await executeCommand(command, cwd, stdin, timeout, title, callbacks);
+            const commandId = saveAndBroadcast(result);
             return {
-                content: [
-                    {
+                content: [{
                         type: 'text',
                         text: JSON.stringify({
+                            status: 'completed',
                             id: commandId,
                             command,
                             processId: result.processId,
@@ -562,8 +733,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                             stderr: result.stderr,
                             success: result.exitCode === 0,
                         }, null, 2),
-                    },
-                ],
+                    }],
             };
         }
         // Terminate command
