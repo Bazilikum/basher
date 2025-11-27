@@ -7,8 +7,9 @@ import { processManager } from './process-manager.js';
 /**
  * Execute a shell command with enhanced logging and timeout support
  * Returns both the command result and the process ID for tracking
+ * @param callbacks Optional callbacks for real-time event notifications
  */
-export async function executeCommand(command, cwd, stdin, timeout, title) {
+export async function executeCommand(command, cwd, stdin, timeout, title, callbacks) {
     return new Promise((resolve, reject) => {
         const startTime = Date.now();
         const timestamp = new Date().toISOString();
@@ -45,6 +46,15 @@ export async function executeCommand(command, cwd, stdin, timeout, title) {
         });
         // Register process for tracking and termination
         const processId = processManager.register(command, child, commandTitle);
+        // Notify callback that command started (for multi-instance support)
+        if (callbacks?.onStart) {
+            try {
+                callbacks.onStart(processId, command, commandTitle, workingDir);
+            }
+            catch (error) {
+                logger.error({ error }, 'onStart callback failed');
+            }
+        }
         // Set up timeout only if specified
         let timeoutHandle;
         if (timeout) {
@@ -75,6 +85,15 @@ export async function executeCommand(command, cwd, stdin, timeout, title) {
                 stdout += timestampedLine;
                 // Also append to process manager for real-time monitoring
                 processManager.appendStdout(processId, timestampedLine);
+                // Notify callback for multi-instance support
+                if (callbacks?.onStdout) {
+                    try {
+                        callbacks.onStdout(processId, timestampedLine);
+                    }
+                    catch {
+                        // Ignore callback errors for output streaming
+                    }
+                }
             }
             logger.debug({
                 stream: 'stdout',
@@ -96,6 +115,15 @@ export async function executeCommand(command, cwd, stdin, timeout, title) {
                 stderr += timestampedLine;
                 // Also append to process manager for real-time monitoring
                 processManager.appendStderr(processId, timestampedLine);
+                // Notify callback for multi-instance support
+                if (callbacks?.onStderr) {
+                    try {
+                        callbacks.onStderr(processId, timestampedLine);
+                    }
+                    catch {
+                        // Ignore callback errors for output streaming
+                    }
+                }
             }
             logger.debug({
                 stream: 'stderr',

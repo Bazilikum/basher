@@ -159,12 +159,20 @@ Basher uses a **singleton pattern** to support multiple Claude terminals sharing
 1. Detects existing instance via health check on the port file
 2. Skips starting web server (uses existing one)
 3. Starts only the MCP server (all tools work normally)
-4. Shows: `🔗 Connected to existing Basher instance at: http://localhost:3000`
+4. **Notifies primary instance** of command events via HTTP for live visibility
+5. Shows: `🔗 Connected to existing Basher instance at: http://localhost:3000`
+
+**Multi-Instance Live Visibility** (v1.6.0+):
+- Secondary instances send real-time notifications to the primary's web server
+- **Live streaming**: Command output is streamed to web UI as it happens
+- **Running commands**: Commands from all terminals appear in `/api/running`
+- **SSE broadcasts**: Web UI receives events from all instances in real-time
 
 **Benefits**:
 - All Claude terminals share the same command history and web dashboard
 - No port conflicts or resource duplication
-- Web UI shows commands from all terminals in real-time
+- Web UI shows commands from all terminals in real-time (including live output)
+- Running commands from any terminal visible in VS Code extension
 - When primary instance shuts down, instance files are cleaned up automatically
 - Next terminal to start becomes the new primary instance
 
@@ -272,6 +280,13 @@ The web server also provides a REST API:
 - `GET /api/logs?limit=100` - Structured logs
 - `GET /api/events` - Server-Sent Events stream
 - `DELETE /api/history` - Clear all history
+
+##### Multi-Instance Coordination
+
+- `POST /api/notify` - Receive command events from secondary instances (used internally)
+  - Event types: `command_start`, `command_output`, `command_complete`, `command_terminated`
+  - Enables live visibility of commands across all Claude terminals
+- `GET /api/health` - Health check endpoint (used by instance detection)
 
 **Example**: Check statistics from the command line:
 ```bash
@@ -688,7 +703,7 @@ Get the current version of Basher MCP server including name, version number, and
 ```json
 {
   "name": "basher",
-  "version": "1.4.0",
+  "version": "1.6.0",
   "description": "Basher - MCP server for executing commands with enhanced logging, history tracking, and improved visibility"
 }
 ```
@@ -1243,6 +1258,8 @@ basher/
 │   │   ├── history-manager.ts         # SQLite history management
 │   │   ├── advanced-queries.ts        # Token-efficient query methods
 │   │   ├── process-manager.ts         # Process tracking and termination
+│   │   ├── instance-detector.ts       # Singleton pattern detection
+│   │   ├── instance-notifier.ts       # Multi-instance HTTP notifications
 │   │   ├── logger.config.ts           # Pino logger configuration
 │   │   └── web-server.ts              # Web UI server with SSE
 │   ├── utils/

@@ -8,15 +8,29 @@ import logger from './logger.config.js';
 import { processManager } from './process-manager.js';
 
 /**
+ * Callbacks for command execution events (used for multi-instance notification)
+ */
+export interface CommandExecutionCallbacks {
+  /** Called when command starts with processId */
+  onStart?: (processId: number, command: string, title: string, cwd: string) => void;
+  /** Called when stdout data is received */
+  onStdout?: (processId: number, data: string) => void;
+  /** Called when stderr data is received */
+  onStderr?: (processId: number, data: string) => void;
+}
+
+/**
  * Execute a shell command with enhanced logging and timeout support
  * Returns both the command result and the process ID for tracking
+ * @param callbacks Optional callbacks for real-time event notifications
  */
 export async function executeCommand(
   command: string,
   cwd?: string,
   stdin?: string,
   timeout?: number,
-  title?: string
+  title?: string,
+  callbacks?: CommandExecutionCallbacks
 ): Promise<CommandResult & { processId: number }> {
   return new Promise((resolve, reject) => {
     const startTime = Date.now();
@@ -60,6 +74,15 @@ export async function executeCommand(
     // Register process for tracking and termination
     const processId = processManager.register(command, child, commandTitle);
 
+    // Notify callback that command started (for multi-instance support)
+    if (callbacks?.onStart) {
+      try {
+        callbacks.onStart(processId, command, commandTitle, workingDir);
+      } catch (error) {
+        logger.error({ error }, 'onStart callback failed');
+      }
+    }
+
     // Set up timeout only if specified
     let timeoutHandle: NodeJS.Timeout | undefined;
     if (timeout) {
@@ -94,6 +117,15 @@ export async function executeCommand(
 
         // Also append to process manager for real-time monitoring
         processManager.appendStdout(processId, timestampedLine);
+
+        // Notify callback for multi-instance support
+        if (callbacks?.onStdout) {
+          try {
+            callbacks.onStdout(processId, timestampedLine);
+          } catch {
+            // Ignore callback errors for output streaming
+          }
+        }
       }
 
       logger.debug({
@@ -119,6 +151,15 @@ export async function executeCommand(
 
         // Also append to process manager for real-time monitoring
         processManager.appendStderr(processId, timestampedLine);
+
+        // Notify callback for multi-instance support
+        if (callbacks?.onStderr) {
+          try {
+            callbacks.onStderr(processId, timestampedLine);
+          } catch {
+            // Ignore callback errors for output streaming
+          }
+        }
       }
 
       logger.debug({

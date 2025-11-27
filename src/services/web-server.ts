@@ -23,12 +23,28 @@ const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf-8'));
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
+/**
+ * Remote running process (from secondary instances)
+ */
+interface RemoteProcess {
+  processId: number;
+  command: string;
+  title: string;
+  cwd: string;
+  startTime: number;
+  stdout: string;
+  stderr: string;
+  instanceId?: string;
+}
+
 export class WebServer {
   private app: express.Application;
   private server: any;
   private historyManager: HistoryManager;
   private port: number;
   private sseClients: Response[] = [];
+  /** Track running processes from secondary instances */
+  private remoteProcesses: Map<number, RemoteProcess> = new Map();
 
   constructor(historyManager: HistoryManager, port: number = 3000) {
     this.app = express();
@@ -340,18 +356,35 @@ export class WebServer {
       }
     });
 
-    // API: Get running commands
+    // API: Get running commands (includes both local and remote processes)
     this.app.get('/api/running', (req: Request, res: Response) => {
       try {
-        const running = processManager.getRunning();
-        res.json({ success: true, data: running });
+        const localRunning = processManager.getRunning();
+        const now = Date.now();
+
+        // Combine local and remote running processes
+        const remoteRunning = Array.from(this.remoteProcesses.values()).map((proc) => ({
+          id: proc.processId,
+          pid: proc.processId, // Use processId as pid for remote
+          command: proc.command,
+          title: proc.title,
+          duration: now - proc.startTime,
+          remote: true,
+        }));
+
+        const allRunning = [
+          ...localRunning.map((r) => ({ ...r, remote: false })),
+          ...remoteRunning,
+        ];
+
+        res.json({ success: true, data: allRunning });
       } catch (error: any) {
         logger.error({ error }, 'Failed to get running commands');
         res.status(500).json({ success: false, error: error.message });
       }
     });
 
-    // API: Get output from a running process
+    // API: Get output from a running process (supports both local and remote)
     this.app.get('/api/process/:processId/output', (req: Request, res: Response) => {
       try {
         const processId = parseInt(req.params.processId);
@@ -361,16 +394,45 @@ export class WebServer {
         }
 
         const lines = req.query.lines ? parseInt(req.query.lines as string) : undefined;
-        const output = processManager.getOutput(processId, lines);
 
-        if (!output) {
-          return res.status(404).json({
-            success: false,
-            error: 'Process not found or already completed'
+        // First check local processes
+        const localOutput = processManager.getOutput(processId, lines);
+        if (localOutput) {
+          return res.json({ success: true, data: { ...localOutput, remote: false } });
+        }
+
+        // Check remote processes
+        const remoteProc = this.remoteProcesses.get(processId);
+        if (remoteProc) {
+          const now = Date.now();
+          let stdout = remoteProc.stdout;
+          let stderr = remoteProc.stderr;
+
+          // Apply lines limit if specified
+          if (lines !== undefined && lines > 0) {
+            stdout = stdout.split('\n').slice(-lines).join('\n');
+            stderr = stderr.split('\n').slice(-lines).join('\n');
+          }
+
+          return res.json({
+            success: true,
+            data: {
+              processId: remoteProc.processId,
+              command: remoteProc.command,
+              title: remoteProc.title,
+              status: 'running',
+              stdout,
+              stderr,
+              duration: now - remoteProc.startTime,
+              remote: true,
+            },
           });
         }
 
-        res.json({ success: true, data: output });
+        return res.status(404).json({
+          success: false,
+          error: 'Process not found or already completed'
+        });
       } catch (error: any) {
         logger.error({ error }, 'Failed to get process output');
         res.status(500).json({ success: false, error: error.message });
@@ -396,6 +458,97 @@ export class WebServer {
         this.sseClients = this.sseClients.filter(client => client !== res);
         logger.info({ clientCount: this.sseClients.length }, 'SSE client disconnected');
       });
+    });
+
+    // API: Receive notifications from secondary instances
+    this.app.post('/api/notify', (req: Request, res: Response) => {
+      try {
+        const event = req.body;
+
+        if (!event || !event.type) {
+          return res.status(400).json({ success: false, error: 'Invalid event format' });
+        }
+
+        logger.debug({ eventType: event.type, processId: event.processId }, 'Received notification from secondary instance');
+
+        switch (event.type) {
+          case 'command_start':
+            // Register remote process
+            this.remoteProcesses.set(event.processId, {
+              processId: event.processId,
+              command: event.command,
+              title: event.title,
+              cwd: event.cwd,
+              startTime: Date.now(),
+              stdout: '',
+              stderr: '',
+            });
+            // Broadcast to SSE clients
+            this.broadcast('command_started', {
+              processId: event.processId,
+              command: event.command,
+              title: event.title,
+              cwd: event.cwd,
+              remote: true,
+            });
+            break;
+
+          case 'command_output':
+            // Update remote process output
+            const proc = this.remoteProcesses.get(event.processId);
+            if (proc) {
+              if (event.stream === 'stdout') {
+                proc.stdout += event.data;
+              } else {
+                proc.stderr += event.data;
+              }
+            }
+            // Broadcast output to SSE clients for live streaming
+            this.broadcast('command_output', {
+              processId: event.processId,
+              stream: event.stream,
+              data: event.data,
+              remote: true,
+            });
+            break;
+
+          case 'command_complete':
+            // Remove from remote processes
+            this.remoteProcesses.delete(event.processId);
+            // Broadcast completion to SSE clients
+            this.broadcast('command_executed', {
+              id: event.historyId,
+              command: event.command,
+              title: event.title,
+              cwd: event.cwd,
+              exitCode: event.exitCode,
+              duration: event.duration,
+              stdout: event.stdout,
+              stderr: event.stderr,
+              timestamp: event.timestamp,
+              remote: true,
+            });
+            break;
+
+          case 'command_terminated':
+            // Remove from remote processes
+            this.remoteProcesses.delete(event.processId);
+            // Broadcast termination
+            this.broadcast('command_terminated', {
+              processId: event.processId,
+              remote: true,
+            });
+            break;
+
+          default:
+            logger.warn({ eventType: event.type }, 'Unknown notification event type');
+        }
+
+        res.json({ success: true });
+      } catch (error) {
+        logger.error({ error }, 'Failed to process notification');
+        res.status(500).json({ success: false, error: 'Failed to process notification' });
+      }
     });
   }
 

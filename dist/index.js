@@ -23,6 +23,7 @@ import { executeCommand } from './services/command-executor.js';
 import { processManager } from './services/process-manager.js';
 import { WebServer } from './services/web-server.js';
 import { InstanceDetector } from './services/instance-detector.js';
+import { InstanceNotifier } from './services/instance-notifier.js';
 import { encodeOutput } from './utils/toon-encoder.js';
 // Read package.json for version info
 const packageJsonPath = join(dirname(fileURLToPath(import.meta.url)), '..', 'package.json');
@@ -99,6 +100,8 @@ const instanceDetector = new InstanceDetector({ basherDir });
 let isPrimaryInstance = false;
 // Initialize web server (will start in main() if primary instance)
 let webServer = null;
+// Initialize instance notifier (for secondary instances to notify primary)
+let instanceNotifier = null;
 // Track existing instance info (when running in client mode)
 let existingInstanceInfo = null;
 // Zod schemas for input validation
@@ -461,10 +464,22 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             const params = executeCommandSchema.parse(args);
             const { command, cwd, stdin, timeout, background, title } = params;
             logger.info({ command, cwd, timeout, background, title }, 'Executing command via MCP tool');
+            // Set up callbacks for secondary instances to notify primary
+            const callbacks = instanceNotifier ? {
+                onStart: (processId, cmd, cmdTitle, cmdCwd) => {
+                    instanceNotifier.notifyCommandStart(processId, cmd, cmdTitle, cmdCwd);
+                },
+                onStdout: (processId, data) => {
+                    instanceNotifier.notifyCommandOutput(processId, 'stdout', data);
+                },
+                onStderr: (processId, data) => {
+                    instanceNotifier.notifyCommandOutput(processId, 'stderr', data);
+                },
+            } : undefined;
             // If background mode (default), return immediately with processId
             if (background) {
                 // Execute in background (don't await)
-                executeCommand(command, cwd, stdin, timeout, title).then(result => {
+                executeCommand(command, cwd, stdin, timeout, title, callbacks).then(result => {
                     // Save to history when complete
                     const historyEntry = {
                         command,
@@ -479,9 +494,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                         status: 'completed',
                     };
                     const commandId = historyManager.saveCommand(historyEntry);
-                    // Broadcast to web UI clients
+                    // Broadcast to web UI clients (primary instance)
                     if (webServer) {
                         webServer.broadcast('command_executed', { ...historyEntry, id: commandId });
+                    }
+                    // Notify primary instance (secondary instance)
+                    if (instanceNotifier) {
+                        instanceNotifier.notifyCommandComplete(result.processId, command, title || command, cwd || process.cwd(), result.exitCode, result.duration, result.stdout, result.stderr, commandId);
                     }
                 }).catch(error => {
                     logger.error({ error, command }, 'Background command failed');
@@ -505,7 +524,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 };
             }
             // Synchronous execution (original behavior)
-            const result = await executeCommand(command, cwd, stdin, timeout, title);
+            const result = await executeCommand(command, cwd, stdin, timeout, title, callbacks);
             // Save to history
             const historyEntry = {
                 command,
@@ -520,9 +539,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 status: 'completed',
             };
             const commandId = historyManager.saveCommand(historyEntry);
-            // Broadcast to web UI clients
+            // Broadcast to web UI clients (primary instance)
             if (webServer) {
                 webServer.broadcast('command_executed', { ...historyEntry, id: commandId });
+            }
+            // Notify primary instance (secondary instance)
+            if (instanceNotifier) {
+                instanceNotifier.notifyCommandComplete(result.processId, command, title || command, cwd || process.cwd(), result.exitCode, result.duration, result.stdout, result.stderr, commandId);
             }
             return {
                 content: [
@@ -549,8 +572,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             const { processId } = params;
             logger.info({ processId }, 'Terminating command via MCP tool');
             const success = processManager.kill(processId);
+            // Broadcast to web UI clients (primary instance)
             if (webServer) {
                 webServer.broadcast('command_terminated', { processId });
+            }
+            // Notify primary instance (secondary instance)
+            if (instanceNotifier) {
+                instanceNotifier.notifyCommandTerminated(processId);
             }
             return {
                 content: [
@@ -1013,6 +1041,10 @@ async function main() {
         if (existingInstanceInfo) {
             // Another instance is already running - run in client mode (no web server)
             isPrimaryInstance = false;
+            // Initialize notifier to send events to primary instance
+            instanceNotifier = new InstanceNotifier({
+                primaryPort: existingInstanceInfo.port,
+            });
             logger.info({
                 existingPort: existingInstanceInfo.port,
                 existingPid: existingInstanceInfo.pid,

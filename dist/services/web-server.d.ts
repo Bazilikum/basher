@@ -9,6 +9,8 @@ export declare class WebServer {
     private historyManager;
     private port;
     private sseClients;
+    /** Track running processes from secondary instances */
+    private remoteProcesses;
     constructor(historyManager: HistoryManager, port?: number);
     private setupMiddleware;
     private setupRoutes;
