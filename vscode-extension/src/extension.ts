@@ -289,15 +289,15 @@ class CommandTreeItem extends vscode.TreeItem {
 
   private getTooltip(): string {
     if (this.commandData.status === 'running') {
-      return `ID: ${this.commandData.processId}\n` +
+      return `Process ID: P${this.commandData.processId}\n` +
              `Command: ${this.commandData.command}\n` +
              `Status: ⏳ Running\n` +
              `Duration: ${this.commandData.duration}ms\n` +
-             `Process ID: ${this.commandData.processId}`;
+             `(Database ID assigned on completion)`;
     }
 
     const success = this.commandData.exitCode === 0;
-    return `ID: ${this.commandData.id}\n` +
+    return `Database ID: #${this.commandData.id}\n` +
            `Command: ${this.commandData.command}\n` +
            `Exit Code: ${this.commandData.exitCode}\n` +
            `Duration: ${this.commandData.duration}ms\n` +
@@ -307,13 +307,14 @@ class CommandTreeItem extends vscode.TreeItem {
   }
 
   private getDescription(): string {
-    const idPrefix = `#${this.commandData.id || this.commandData.processId}`;
-
     if (this.commandData.status === 'running') {
+      // For running commands, show process ID with P prefix to distinguish from database ID
       const durationSec = (this.commandData.duration / 1000).toFixed(1);
-      return `${idPrefix} ⏳ Running [${durationSec}s]`;
+      return `P${this.commandData.processId} ⏳ Running [${durationSec}s]`;
     }
 
+    // For completed commands, show database ID
+    const idPrefix = `#${this.commandData.id}`;
     const date = new Date(this.commandData.timestamp);
     const timeStr = date.toLocaleTimeString();
     const success = this.commandData.exitCode === 0;
