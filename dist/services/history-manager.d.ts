@@ -43,6 +43,11 @@ export declare class HistoryManager {
      * Get recent command history
      */
     getCommandById(id: number): CommandHistoryEntry | null;
+    /**
+     * Get a command by its process ID (useful for finding completed background commands)
+     * Returns the most recent command with this process ID
+     */
+    getCommandByProcessId(processId: number): CommandHistoryEntry | null;
     getRecentHistory(limit?: number): CommandHistoryEntry[];
     /**
      * Get command history by exit code

@@ -331,6 +331,20 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
+        name: 'get_command_by_process_id',
+        description: 'Look up a completed command by its process ID. Use this to find the database ID and full details of a background command after it completes. The process ID is returned when you start a background command.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            processId: {
+              type: 'number',
+              description: 'The process ID that was returned when the command was started',
+            },
+          },
+          required: ['processId'],
+        },
+      },
+      {
         name: 'get_command_stats',
         description: 'Get statistics about command execution history including total commands, failures, and average execution duration.',
         inputSchema: {
@@ -1271,6 +1285,85 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 success: command.exitCode === 0,
                 processId: command.processId,
                 status: command.status,
+                stdout: command.stdout,
+                stderr: command.stderr,
+                stdoutLength: command.stdout?.length || 0,
+                stderrLength: command.stderr?.length || 0,
+              },
+              null,
+              2
+            ),
+          },
+        ],
+      };
+    }
+
+    // Get command by process ID (for finding completed background commands)
+    if (name === 'get_command_by_process_id') {
+      const params = z.object({ processId: z.number() }).parse(args);
+      const { processId } = params;
+
+      logger.info({ processId }, 'Getting command by process ID');
+
+      // First check if it's still running
+      const isRunning = processManager.isRunning(processId);
+      if (isRunning) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(
+                {
+                  status: 'running',
+                  processId,
+                  message: 'Command is still running. Use get_process_output to monitor progress.',
+                },
+                null,
+                2
+              ),
+            },
+          ],
+        };
+      }
+
+      // Look up in history
+      const command = historyManager.getCommandByProcessId(processId);
+
+      if (!command) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(
+                {
+                  status: 'not_found',
+                  processId,
+                  message: 'No completed command found with this process ID. The command may not have been saved to history yet, or the process ID may be invalid.',
+                },
+                null,
+                2
+              ),
+            },
+          ],
+        };
+      }
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(
+              {
+                status: 'completed',
+                id: command.id,
+                processId: command.processId,
+                command: command.command,
+                title: command.title,
+                cwd: command.cwd,
+                timestamp: command.timestamp,
+                exitCode: command.exitCode,
+                duration: `${command.duration}ms`,
+                success: command.exitCode === 0,
                 stdout: command.stdout,
                 stderr: command.stderr,
                 stdoutLength: command.stdout?.length || 0,

@@ -257,6 +257,44 @@ export class HistoryManager {
     }
   }
 
+  /**
+   * Get a command by its process ID (useful for finding completed background commands)
+   * Returns the most recent command with this process ID
+   */
+  getCommandByProcessId(processId: number): CommandHistoryEntry | null {
+    try {
+      const stmt = this.db.prepare(`
+        SELECT * FROM command_history
+        WHERE process_id = ?
+        ORDER BY id DESC
+        LIMIT 1
+      `);
+
+      const row = stmt.get(processId) as any;
+
+      if (!row) {
+        return null;
+      }
+
+      return {
+        id: row.id,
+        command: row.command,
+        title: row.title,
+        cwd: row.cwd,
+        timestamp: row.timestamp,
+        exitCode: row.exit_code,
+        duration: row.duration,
+        stdout: row.stdout,
+        stderr: row.stderr,
+        processId: row.process_id,
+        status: row.status,
+      };
+    } catch (error) {
+      logger.error({ error, processId }, 'Error getting command by process ID');
+      return null;
+    }
+  }
+
   getRecentHistory(limit: number = 100): CommandHistoryEntry[] {
     try {
       const stmt = this.db.prepare(`
