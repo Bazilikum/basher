@@ -44,8 +44,8 @@ export async function executeCommand(command, cwd, stdin, timeout, title, callba
             shell: true,
             stdio: ['pipe', 'pipe', 'pipe'],
         });
-        // Register process for tracking and termination
-        const processId = processManager.register(command, child, commandTitle);
+        // Register process for tracking and termination (with cwd for persistence)
+        const processId = processManager.register(command, child, commandTitle, workingDir);
         // Notify callback that command started (for multi-instance support)
         if (callbacks?.onStart) {
             try {

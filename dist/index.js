@@ -101,6 +101,8 @@ const historyManager = new HistoryManager(dbPath, historyOptions);
 // Initialize template and session managers (share the same database)
 const templateManager = new CommandTemplateManager(historyManager.getDatabase());
 const sessionManager = new CommandSessionManager(historyManager.getDatabase());
+// Initialize process manager with basher directory for state persistence
+processManager.initialize(basherDir);
 // Instance detector for singleton pattern
 const instanceDetector = new InstanceDetector({ basherDir });
 // Track whether this instance is the primary (web server owner)
@@ -1750,6 +1752,8 @@ async function main() {
         // Graceful shutdown
         const shutdown = async () => {
             logger.info({ isPrimaryInstance }, 'Shutting down gracefully...');
+            // Save or cleanup process state before exit
+            processManager.cleanup();
             if (isPrimaryInstance) {
                 // Primary instance: stop web server and clean up instance files
                 if (webServer) {

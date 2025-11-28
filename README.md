@@ -175,11 +175,18 @@ Basher uses a **singleton pattern** to support multiple Claude terminals sharing
 - **Running commands**: Commands from all terminals appear in `/api/running`
 - **SSE broadcasts**: Web UI receives events from all instances in real-time
 
+**Process State Persistence** (v1.8.1+):
+- Running processes are persisted to `.basher/running-processes.json`
+- When Basher restarts, orphaned processes are automatically adopted
+- Adopted processes appear in running commands list with preserved metadata
+- Enables visibility of long-running commands across context resets and breaks
+
 **Benefits**:
 - All Claude terminals share the same command history and web dashboard
 - No port conflicts or resource duplication
 - Web UI shows commands from all terminals in real-time (including live output)
 - Running commands from any terminal visible in VS Code extension
+- **Long-running commands survive Basher restarts** (v1.8.1+)
 - When primary instance shuts down, instance files are cleaned up automatically
 - Next terminal to start becomes the new primary instance
 

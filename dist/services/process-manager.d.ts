@@ -1,5 +1,6 @@
 /**
  * Process manager for tracking and controlling running commands
+ * Supports persistence across restarts via state file
  */
 import { ChildProcess } from 'child_process';
 interface RunningProcess {
@@ -7,17 +8,45 @@ interface RunningProcess {
     command: string;
     title: string;
     startTime: number;
-    process: ChildProcess;
+    process: ChildProcess | null;
     stdout: string;
     stderr: string;
+    isOrphan?: boolean;
+    cwd?: string;
 }
 declare class ProcessManager {
     private processes;
     private processIdCounter;
+    private stateFilePath;
+    private saveDebounceTimer;
+    /**
+     * Initialize process manager with state file path
+     */
+    initialize(basherDir: string): void;
+    /**
+     * Check for orphaned processes from previous instance and adopt them
+     */
+    private adoptOrphanedProcesses;
+    /**
+     * Check if a process is alive by PID
+     */
+    private isProcessAlive;
+    /**
+     * Monitor an orphaned process for completion
+     */
+    private monitorOrphanedProcess;
+    /**
+     * Save current process state to file
+     */
+    private saveState;
+    /**
+     * Clean up state file on shutdown
+     */
+    cleanup(): void;
     /**
      * Register a new running process
      */
-    register(command: string, process: ChildProcess, title?: string): number;
+    register(command: string, childProcess: ChildProcess, title?: string, cwd?: string): number;
     /**
      * Unregister a process (called when it exits)
      */
