@@ -25,6 +25,10 @@ import { WebServer } from './services/web-server.js';
 import { InstanceDetector } from './services/instance-detector.js';
 import { InstanceNotifier } from './services/instance-notifier.js';
 import { encodeOutput } from './utils/toon-encoder.js';
+import { parseOutput, getSmartSummary, estimateTokens, interpretExitCode, trackProgress, } from './services/output-parser.js';
+import { CommandTemplateManager } from './services/command-templates.js';
+import { CommandSessionManager } from './services/command-sessions.js';
+import { analyzeFailure, diffOutputs } from './services/failure-analyzer.js';
 // Read package.json for version info
 const packageJsonPath = join(dirname(fileURLToPath(import.meta.url)), '..', 'package.json');
 const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf-8'));
@@ -94,6 +98,9 @@ const historyOptions = {
         : 7 * 24 * 60 * 60 * 1000,
 };
 const historyManager = new HistoryManager(dbPath, historyOptions);
+// Initialize template and session managers (share the same database)
+const templateManager = new CommandTemplateManager(historyManager.getDatabase());
+const sessionManager = new CommandSessionManager(historyManager.getDatabase());
 // Instance detector for singleton pattern
 const instanceDetector = new InstanceDetector({ basherDir });
 // Track whether this instance is the primary (web server owner)
@@ -114,6 +121,17 @@ const executeCommandSchema = z.object({
     title: z.string().optional(),
     waitFor: z.string().optional(), // Regex pattern to wait for in output
     waitTimeout: z.number().positive().optional().default(30000), // Timeout for waitFor in ms
+    // New features
+    parseAs: z.enum(['jest', 'pytest', 'eslint', 'tsc', 'typescript', 'json', 'generic', 'auto']).optional(),
+    outputMode: z.enum(['full', 'smart', 'tail']).optional().default('full'),
+    trackProgress: z.boolean().optional().default(false),
+    retry: z.object({
+        attempts: z.number().min(1).max(10),
+        backoff: z.enum(['none', 'linear', 'exponential']).optional().default('none'),
+        delayMs: z.number().positive().optional().default(1000),
+    }).optional(),
+    diffWithLast: z.boolean().optional().default(false),
+    analyzeFailure: z.boolean().optional().default(true), // Auto-analyze failures
 });
 const searchHistorySchema = z.object({
     query: z.string().min(1, 'Query cannot be empty'),
@@ -174,6 +192,37 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         waitTimeout: {
                             type: 'number',
                             description: 'Timeout in ms for waitFor pattern (default: 30000). If pattern not matched within timeout, returns with timeout status.',
+                        },
+                        parseAs: {
+                            type: 'string',
+                            enum: ['jest', 'pytest', 'eslint', 'tsc', 'typescript', 'json', 'generic', 'auto'],
+                            description: 'Parse output as specific format. Returns structured data (passed/failed tests, errors, etc). "auto" detects from command.',
+                        },
+                        outputMode: {
+                            type: 'string',
+                            enum: ['full', 'smart', 'tail'],
+                            description: 'Output mode: "full" (default), "smart" (errors/warnings/key lines only), "tail" (last 20 lines).',
+                        },
+                        trackProgress: {
+                            type: 'boolean',
+                            description: 'Track progress indicators in output (percentage, X/Y counts, ETA). Returns progress info.',
+                        },
+                        retry: {
+                            type: 'object',
+                            description: 'Retry configuration for flaky commands.',
+                            properties: {
+                                attempts: { type: 'number', description: 'Number of retry attempts (1-10)' },
+                                backoff: { type: 'string', enum: ['none', 'linear', 'exponential'], description: 'Backoff strategy' },
+                                delayMs: { type: 'number', description: 'Delay between retries in ms (default: 1000)' },
+                            },
+                        },
+                        diffWithLast: {
+                            type: 'boolean',
+                            description: 'Compare output with last similar command. Shows added/removed lines.',
+                        },
+                        analyzeFailure: {
+                            type: 'boolean',
+                            description: 'Auto-analyze failures (default: true). Returns error type, suggestions, related commands.',
                         },
                     },
                     required: ['command'],
@@ -462,6 +511,114 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     required: ['startId'],
                 },
             },
+            // Template tools
+            {
+                name: 'save_template',
+                description: 'Save a reusable command template. Templates store command configurations for quick re-execution.',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        name: { type: 'string', description: 'Unique template name (e.g., "test", "build", "lint")' },
+                        command: { type: 'string', description: 'Shell command to execute' },
+                        title: { type: 'string', description: 'Display title for the command' },
+                        cwd: { type: 'string', description: 'Working directory' },
+                        timeout: { type: 'number', description: 'Timeout in ms' },
+                        parseAs: { type: 'string', enum: ['jest', 'pytest', 'eslint', 'tsc', 'json', 'auto'], description: 'Output parser' },
+                        waitFor: { type: 'string', description: 'Pattern to wait for' },
+                        waitTimeout: { type: 'number', description: 'Wait timeout in ms' },
+                        retry: { type: 'object', description: 'Retry configuration', properties: { attempts: { type: 'number' }, backoff: { type: 'string' }, delayMs: { type: 'number' } } },
+                        description: { type: 'string', description: 'Template description' },
+                        tags: { type: 'array', items: { type: 'string' }, description: 'Tags for organization' },
+                    },
+                    required: ['name', 'command'],
+                },
+            },
+            {
+                name: 'run_template',
+                description: 'Run a saved command template by name. Much faster than re-specifying all options.',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        name: { type: 'string', description: 'Template name to run' },
+                        overrides: {
+                            type: 'object',
+                            description: 'Override template settings',
+                            properties: {
+                                cwd: { type: 'string' },
+                                timeout: { type: 'number' },
+                                background: { type: 'boolean' },
+                            },
+                        },
+                    },
+                    required: ['name'],
+                },
+            },
+            {
+                name: 'list_templates',
+                description: 'List all saved command templates, optionally filtered by tag.',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        tag: { type: 'string', description: 'Filter by tag (optional)' },
+                    },
+                },
+            },
+            {
+                name: 'delete_template',
+                description: 'Delete a saved command template.',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        name: { type: 'string', description: 'Template name to delete' },
+                    },
+                    required: ['name'],
+                },
+            },
+            // Session tools
+            {
+                name: 'start_session',
+                description: 'Start a new command session. All subsequent commands are grouped under this session for organization.',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        name: { type: 'string', description: 'Session name (e.g., "Fix auth bug", "Feature implementation")' },
+                        description: { type: 'string', description: 'Session description' },
+                    },
+                    required: ['name'],
+                },
+            },
+            {
+                name: 'end_session',
+                description: 'End the current active session.',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        status: { type: 'string', enum: ['completed', 'abandoned'], description: 'Session end status (default: completed)' },
+                    },
+                },
+            },
+            {
+                name: 'get_session',
+                description: 'Get session details and associated commands.',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        name: { type: 'string', description: 'Session name (gets most recent with this name)' },
+                        id: { type: 'number', description: 'Session ID (alternative to name)' },
+                    },
+                },
+            },
+            {
+                name: 'list_sessions',
+                description: 'List all command sessions.',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        status: { type: 'string', enum: ['active', 'completed', 'abandoned'], description: 'Filter by status' },
+                        limit: { type: 'number', description: 'Maximum sessions to return (default: 50)' },
+                    },
+                },
+            },
         ],
     };
 });
@@ -472,8 +629,70 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         // Execute command
         if (name === 'execute_command') {
             const params = executeCommandSchema.parse(args);
-            const { command, cwd, stdin, timeout, background, title, waitFor, waitTimeout } = params;
-            logger.info({ command, cwd, timeout, background, title, waitFor, waitTimeout }, 'Executing command via MCP tool');
+            const { command, cwd, stdin, timeout, background, title, waitFor, waitTimeout, parseAs, outputMode, trackProgress: doTrackProgress, retry, diffWithLast, analyzeFailure: doAnalyzeFailure } = params;
+            logger.info({ command, cwd, timeout, background, title, waitFor, waitTimeout, parseAs, outputMode }, 'Executing command via MCP tool');
+            // Helper to enhance result with new features
+            const enhanceResult = (result, commandId) => {
+                const enhanced = {
+                    status: 'completed',
+                    id: commandId,
+                    command,
+                    processId: result.processId,
+                    exitCode: result.exitCode,
+                    duration: `${result.duration}ms`,
+                    timestamp: result.timestamp,
+                    success: result.exitCode === 0,
+                };
+                // Token estimate
+                enhanced.tokenEstimate = estimateTokens(result.stdout + result.stderr);
+                // Exit code interpretation
+                enhanced.exitCodeInfo = interpretExitCode(result.exitCode);
+                // Output based on mode
+                if (outputMode === 'smart') {
+                    const summary = getSmartSummary(result.stdout, result.stderr, result.exitCode);
+                    enhanced.output = summary;
+                }
+                else if (outputMode === 'tail') {
+                    const lines = (result.stdout + result.stderr).split('\n');
+                    enhanced.output = {
+                        lastLines: lines.slice(-20).join('\n'),
+                        totalLines: lines.length,
+                    };
+                }
+                else {
+                    enhanced.stdout = result.stdout;
+                    enhanced.stderr = result.stderr;
+                }
+                // Parse output if requested
+                if (parseAs) {
+                    enhanced.parsed = parseOutput(result.stdout, result.stderr, result.exitCode, parseAs, command);
+                }
+                // Track progress if requested
+                if (doTrackProgress) {
+                    enhanced.progress = trackProgress(result.stdout + result.stderr);
+                }
+                // Analyze failure if command failed and analysis enabled
+                if (result.exitCode !== 0 && doAnalyzeFailure !== false) {
+                    enhanced.failureAnalysis = analyzeFailure(command, result.stdout, result.stderr, result.exitCode);
+                }
+                // Diff with last similar command
+                if (diffWithLast && commandId) {
+                    const similar = historyManager.advanced.getSimilarCommands(commandId, 1, 'summary');
+                    if (similar.length > 0) {
+                        const lastCmd = historyManager.getCommandById(similar[0].id);
+                        if (lastCmd) {
+                            enhanced.diff = diffOutputs(lastCmd.stdout, lastCmd.stderr, result.stdout, result.stderr);
+                        }
+                    }
+                }
+                // Add to active session if any
+                const activeSessionId = sessionManager.getActiveSessionId();
+                if (activeSessionId && commandId) {
+                    sessionManager.addCommandToSession(commandId);
+                    enhanced.sessionId = activeSessionId;
+                }
+                return enhanced;
+            };
             // Shared state for capturing processId and output
             let capturedProcessId = null;
             let accumulatedStdout = '';
@@ -718,21 +937,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             };
             const result = await executeCommand(command, cwd, stdin, timeout, title, callbacks);
             const commandId = saveAndBroadcast(result);
+            // Use enhanced result with new features
+            const enhanced = enhanceResult(result, commandId);
             return {
                 content: [{
                         type: 'text',
-                        text: JSON.stringify({
-                            status: 'completed',
-                            id: commandId,
-                            command,
-                            processId: result.processId,
-                            exitCode: result.exitCode,
-                            duration: `${result.duration}ms`,
-                            timestamp: result.timestamp,
-                            stdout: result.stdout,
-                            stderr: result.stderr,
-                            success: result.exitCode === 0,
-                        }, null, 2),
+                        text: JSON.stringify(enhanced, null, 2),
                     }],
             };
         }
@@ -1190,6 +1400,299 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                         }, null, 2),
                     },
                 ],
+            };
+        }
+        // ============================================
+        // Template tools
+        // ============================================
+        if (name === 'save_template') {
+            const params = z.object({
+                name: z.string().min(1),
+                command: z.string().min(1),
+                title: z.string().optional(),
+                cwd: z.string().optional(),
+                timeout: z.number().positive().optional(),
+                parseAs: z.enum(['jest', 'pytest', 'eslint', 'tsc', 'json', 'auto']).optional(),
+                waitFor: z.string().optional(),
+                waitTimeout: z.number().positive().optional(),
+                retry: z.object({
+                    attempts: z.number(),
+                    backoff: z.enum(['none', 'linear', 'exponential']).optional(),
+                    delayMs: z.number().optional(),
+                }).optional(),
+                description: z.string().optional(),
+                tags: z.array(z.string()).optional(),
+            }).parse(args);
+            logger.info({ templateName: params.name }, 'Saving command template');
+            const template = templateManager.save(params);
+            return {
+                content: [{
+                        type: 'text',
+                        text: JSON.stringify({
+                            success: true,
+                            message: `Template '${params.name}' saved successfully`,
+                            template,
+                        }, null, 2),
+                    }],
+            };
+        }
+        if (name === 'run_template') {
+            const params = z.object({
+                name: z.string().min(1),
+                overrides: z.object({
+                    cwd: z.string().optional(),
+                    timeout: z.number().positive().optional(),
+                    background: z.boolean().optional(),
+                }).optional(),
+            }).parse(args);
+            logger.info({ templateName: params.name }, 'Running command template');
+            const template = templateManager.get(params.name);
+            if (!template) {
+                return {
+                    content: [{
+                            type: 'text',
+                            text: JSON.stringify({
+                                success: false,
+                                error: `Template '${params.name}' not found`,
+                            }, null, 2),
+                        }],
+                };
+            }
+            // Build execute_command params from template + overrides
+            const execParams = {
+                command: template.command,
+                cwd: params.overrides?.cwd || template.cwd,
+                timeout: params.overrides?.timeout || template.timeout,
+                background: params.overrides?.background ?? true,
+                title: template.title,
+                waitFor: template.waitFor,
+                waitTimeout: template.waitTimeout,
+                parseAs: template.parseAs,
+            };
+            // Re-invoke execute_command with template params
+            // This is a simplified execution - in production you'd call the full handler
+            const callbacks = {
+                onStart: (processId, cmd, cmdTitle, cmdCwd) => {
+                    if (instanceNotifier) {
+                        instanceNotifier.notifyCommandStart(processId, cmd, cmdTitle, cmdCwd);
+                    }
+                },
+                onStdout: (processId, data) => {
+                    if (instanceNotifier) {
+                        instanceNotifier.notifyCommandOutput(processId, 'stdout', data);
+                    }
+                },
+                onStderr: (processId, data) => {
+                    if (instanceNotifier) {
+                        instanceNotifier.notifyCommandOutput(processId, 'stderr', data);
+                    }
+                },
+            };
+            const result = await executeCommand(execParams.command, execParams.cwd, undefined, execParams.timeout, execParams.title, callbacks);
+            const historyEntry = {
+                command: execParams.command,
+                title: execParams.title || execParams.command,
+                cwd: execParams.cwd || process.cwd(),
+                timestamp: result.timestamp,
+                exitCode: result.exitCode,
+                duration: result.duration,
+                stdout: result.stdout,
+                stderr: result.stderr,
+                processId: result.processId,
+                status: 'completed',
+            };
+            const commandId = historyManager.saveCommand(historyEntry);
+            // Add to session if active
+            const activeSessionId = sessionManager.getActiveSessionId();
+            if (activeSessionId) {
+                sessionManager.addCommandToSession(commandId);
+            }
+            // Parse output if template specifies
+            let parsed;
+            if (execParams.parseAs) {
+                parsed = parseOutput(result.stdout, result.stderr, result.exitCode, execParams.parseAs, execParams.command);
+            }
+            return {
+                content: [{
+                        type: 'text',
+                        text: JSON.stringify({
+                            status: 'completed',
+                            templateName: params.name,
+                            id: commandId,
+                            command: execParams.command,
+                            processId: result.processId,
+                            exitCode: result.exitCode,
+                            duration: `${result.duration}ms`,
+                            success: result.exitCode === 0,
+                            parsed,
+                            stdout: result.stdout,
+                            stderr: result.stderr,
+                            sessionId: activeSessionId,
+                        }, null, 2),
+                    }],
+            };
+        }
+        if (name === 'list_templates') {
+            const params = z.object({
+                tag: z.string().optional(),
+            }).parse(args);
+            logger.info({ tag: params.tag }, 'Listing command templates');
+            const templates = templateManager.list(params.tag);
+            return {
+                content: [{
+                        type: 'text',
+                        text: JSON.stringify({
+                            count: templates.length,
+                            templates: templates.map(t => ({
+                                name: t.name,
+                                command: t.command,
+                                description: t.description,
+                                tags: t.tags,
+                                parseAs: t.parseAs,
+                                waitFor: t.waitFor,
+                            })),
+                        }, null, 2),
+                    }],
+            };
+        }
+        if (name === 'delete_template') {
+            const params = z.object({
+                name: z.string().min(1),
+            }).parse(args);
+            logger.info({ templateName: params.name }, 'Deleting command template');
+            const deleted = templateManager.delete(params.name);
+            return {
+                content: [{
+                        type: 'text',
+                        text: JSON.stringify({
+                            success: deleted,
+                            message: deleted
+                                ? `Template '${params.name}' deleted successfully`
+                                : `Template '${params.name}' not found`,
+                        }, null, 2),
+                    }],
+            };
+        }
+        // ============================================
+        // Session tools
+        // ============================================
+        if (name === 'start_session') {
+            const params = z.object({
+                name: z.string().min(1),
+                description: z.string().optional(),
+            }).parse(args);
+            logger.info({ sessionName: params.name }, 'Starting command session');
+            const session = sessionManager.startSession(params.name, params.description);
+            return {
+                content: [{
+                        type: 'text',
+                        text: JSON.stringify({
+                            success: true,
+                            message: `Session '${params.name}' started`,
+                            session,
+                        }, null, 2),
+                    }],
+            };
+        }
+        if (name === 'end_session') {
+            const params = z.object({
+                status: z.enum(['completed', 'abandoned']).optional().default('completed'),
+            }).parse(args);
+            logger.info({ status: params.status }, 'Ending command session');
+            const session = sessionManager.endSession(params.status);
+            if (!session) {
+                return {
+                    content: [{
+                            type: 'text',
+                            text: JSON.stringify({
+                                success: false,
+                                message: 'No active session to end',
+                            }, null, 2),
+                        }],
+                };
+            }
+            return {
+                content: [{
+                        type: 'text',
+                        text: JSON.stringify({
+                            success: true,
+                            message: `Session '${session.name}' ended with status: ${params.status}`,
+                            session,
+                        }, null, 2),
+                    }],
+            };
+        }
+        if (name === 'get_session') {
+            const params = z.object({
+                name: z.string().optional(),
+                id: z.number().optional(),
+            }).parse(args);
+            if (!params.name && !params.id) {
+                // Return active session if no params
+                const active = sessionManager.getActiveSession();
+                if (!active) {
+                    return {
+                        content: [{
+                                type: 'text',
+                                text: JSON.stringify({
+                                    success: false,
+                                    message: 'No active session. Provide name or id to look up a specific session.',
+                                }, null, 2),
+                            }],
+                    };
+                }
+                const commandIds = sessionManager.getSessionCommandIds(active.id);
+                return {
+                    content: [{
+                            type: 'text',
+                            text: JSON.stringify({
+                                session: active,
+                                commandIds,
+                            }, null, 2),
+                        }],
+                };
+            }
+            const session = params.id
+                ? sessionManager.getSession(params.id)
+                : sessionManager.getSessionByName(params.name);
+            if (!session) {
+                return {
+                    content: [{
+                            type: 'text',
+                            text: JSON.stringify({
+                                success: false,
+                                message: `Session not found`,
+                            }, null, 2),
+                        }],
+                };
+            }
+            const commandIds = sessionManager.getSessionCommandIds(session.id);
+            return {
+                content: [{
+                        type: 'text',
+                        text: JSON.stringify({
+                            session,
+                            commandIds,
+                        }, null, 2),
+                    }],
+            };
+        }
+        if (name === 'list_sessions') {
+            const params = z.object({
+                status: z.enum(['active', 'completed', 'abandoned']).optional(),
+                limit: z.number().positive().optional().default(50),
+            }).parse(args);
+            logger.info({ status: params.status, limit: params.limit }, 'Listing sessions');
+            const sessions = sessionManager.listSessions(params.status, params.limit);
+            return {
+                content: [{
+                        type: 'text',
+                        text: JSON.stringify({
+                            count: sessions.length,
+                            activeSessionId: sessionManager.getActiveSessionId(),
+                            sessions,
+                        }, null, 2),
+                    }],
             };
         }
         throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);

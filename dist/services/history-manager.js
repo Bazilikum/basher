@@ -8,6 +8,12 @@ import { mkdirSync } from 'fs';
 import logger from './logger.config.js';
 import { AdvancedQueries } from './advanced-queries.js';
 export class HistoryManager {
+    /**
+     * Get the database instance (for sharing with other managers)
+     */
+    getDatabase() {
+        return this.db;
+    }
     constructor(dbPath = join(process.cwd(), 'data', 'command-history.db'), options = {}) {
         // Set cleanup limits with defaults
         this.maxEntries = options.maxEntries ?? 1000;

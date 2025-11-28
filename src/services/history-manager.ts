@@ -23,6 +23,13 @@ export class HistoryManager {
   private maxEntries: number;
   private maxAgeMs: number;
 
+  /**
+   * Get the database instance (for sharing with other managers)
+   */
+  getDatabase(): Database.Database {
+    return this.db;
+  }
+
   constructor(
     dbPath: string = join(process.cwd(), 'data', 'command-history.db'),
     options: HistoryManagerOptions = {}

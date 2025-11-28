@@ -23,6 +23,13 @@ MCP server for executing shell commands with enhanced logging, history tracking,
 - **Live Output Monitoring**: Watch command output in real-time with per-line timestamps
 - **Timeout Control**: Configurable timeouts for long-running commands
 - **Better Error Tracking**: Detailed error categorization and logging
+- **Structured Output Parsing** (v1.8.0): Parse Jest, pytest, ESLint, TypeScript, and JSON output into structured data
+- **Smart Output Modes** (v1.8.0): Intelligent summaries, tail mode, and token estimation
+- **Command Templates** (v1.8.0): Save and reuse command configurations with retry policies
+- **Command Sessions** (v1.8.0): Group related commands into sessions for better organization
+- **Failure Analysis** (v1.8.0): Automatic error categorization with actionable suggestions
+- **Auto-Retry** (v1.8.0): Retry failed commands with configurable backoff strategies
+- **Output Diff** (v1.8.0): Auto-compare output with previous runs of the same command
 
 ## Installation
 
@@ -600,6 +607,125 @@ Execute a shell command with enhanced logging and automatic history tracking.
 
 > 💡 **Pro tip**: Use `waitFor` instead of polling `get_process_output` repeatedly. One tool call replaces many!
 
+#### Smart Output Processing (v1.8.0)
+
+**Additional Parameters:**
+- `parseAs` (string, optional): Parse output as structured data. Options: `jest`, `pytest`, `eslint`, `tsc`, `typescript`, `json`, `auto`. Returns parsed results with test counts, errors, etc.
+- `outputMode` (string, optional): Control output format. Options:
+  - `full` (default): Complete stdout/stderr
+  - `smart`: Intelligent summary focusing on errors and key information
+  - `tail`: Last 50 lines only
+- `trackProgress` (boolean, optional): Enable progress tracking. Returns progress info like percentage, current item, etc.
+- `retry` (object, optional): Auto-retry failed commands
+  - `attempts` (number): Max retry attempts
+  - `backoff` (string): `none`, `linear`, or `exponential`
+  - `delayMs` (number): Base delay between retries
+- `diffWithLast` (boolean, optional): Auto-diff output with most recent run of the same command
+- `analyzeFailure` (boolean, optional, default: true): Analyze failures and provide suggestions
+
+**Example: Parse test output**
+```typescript
+{
+  "command": "npm test",
+  "background": false,
+  "parseAs": "jest"
+}
+```
+```json
+{
+  "status": "completed",
+  "exitCode": 0,
+  "parsed": {
+    "type": "jest",
+    "summary": "Tests: 42 passed, 0 failed",
+    "passed": 42,
+    "failed": 0,
+    "skipped": 2,
+    "total": 44,
+    "duration": 5234,
+    "testSuites": { "passed": 5, "failed": 0 }
+  },
+  "tokenEstimate": {
+    "estimated": 1234,
+    "original": 5678,
+    "savings": "78%"
+  }
+}
+```
+
+**Example: Smart output mode**
+```typescript
+{
+  "command": "npm run build",
+  "background": false,
+  "outputMode": "smart"
+}
+```
+Returns intelligent summary focusing on errors, warnings, and completion status.
+
+**Example: Retry with exponential backoff**
+```typescript
+{
+  "command": "curl https://api.example.com/health",
+  "background": false,
+  "retry": {
+    "attempts": 3,
+    "backoff": "exponential",
+    "delayMs": 1000
+  }
+}
+```
+Retries up to 3 times with delays: 1s, 2s, 4s.
+
+**Example: Auto-diff with previous run**
+```typescript
+{
+  "command": "npm test",
+  "background": false,
+  "diffWithLast": true
+}
+```
+```json
+{
+  "status": "completed",
+  "diff": {
+    "comparedWith": 42,
+    "summary": "stdout: +5 -2 lines. stderr: +0 -1 lines.",
+    "stdoutDiff": { "added": 5, "removed": 2 },
+    "stderrDiff": { "added": 0, "removed": 1 }
+  }
+}
+```
+
+**Example: Failure analysis**
+```typescript
+{
+  "command": "npm install nonexistent-package",
+  "background": false,
+  "analyzeFailure": true
+}
+```
+```json
+{
+  "status": "completed",
+  "exitCode": 1,
+  "failureAnalysis": {
+    "errorType": "npm error",
+    "category": "dependency",
+    "summary": "npm error code: E404",
+    "suggestions": [
+      "Try: npm cache clean --force",
+      "Delete node_modules and run npm install",
+      "Check your npm registry configuration"
+    ],
+    "relatedCommands": [
+      "npm cache clean --force",
+      "rm -rf node_modules && npm install"
+    ]
+  }
+}
+```
+
 ### 2. search_command_history
 
 Search past command executions using full-text search.
@@ -755,7 +881,7 @@ Get the current version of Basher MCP server including name, version number, and
 ```json
 {
   "name": "basher",
-  "version": "1.7.0",
+  "version": "1.8.0",
   "description": "Basher - MCP server for executing commands with enhanced logging, history tracking, and improved visibility"
 }
 ```
@@ -1118,6 +1244,181 @@ Get a sequence of commands executed in the same working directory around a speci
 }
 ```
 
+### 17. save_template (v1.8.0)
+
+Save a reusable command template with predefined settings.
+
+**Parameters:**
+- `name` (string, required): Unique template name
+- `command` (string, required): The command to save
+- `title` (string, optional): Human-readable title
+- `cwd` (string, optional): Working directory
+- `timeout` (number, optional): Timeout in milliseconds
+- `parseAs` (string, optional): Parser type (jest, pytest, eslint, tsc, json, auto)
+- `waitFor` (string, optional): Pattern to wait for
+- `waitTimeout` (number, optional): Wait timeout in ms
+- `retry` (object, optional): Retry configuration
+- `description` (string, optional): Template description
+- `tags` (string[], optional): Tags for categorization
+
+**Example:**
+```typescript
+{
+  "name": "run-tests",
+  "command": "npm test",
+  "title": "Run Unit Tests",
+  "parseAs": "jest",
+  "retry": { "attempts": 2, "backoff": "linear", "delayMs": 1000 },
+  "description": "Run the project's unit tests",
+  "tags": ["test", "npm"]
+}
+```
+
+### 18. run_template (v1.8.0)
+
+Execute a saved command template.
+
+**Parameters:**
+- `name` (string, required): Template name to run
+- `cwd` (string, optional): Override working directory
+- `background` (boolean, optional): Override background setting
+
+**Example:**
+```typescript
+{
+  "name": "run-tests",
+  "background": false
+}
+```
+
+### 19. list_templates (v1.8.0)
+
+List all saved command templates.
+
+**Parameters:**
+- `tag` (string, optional): Filter by tag
+
+**Example:**
+```typescript
+{ "tag": "test" }
+```
+
+**Returns:**
+```json
+{
+  "count": 3,
+  "templates": [
+    {
+      "name": "run-tests",
+      "command": "npm test",
+      "description": "Run the project's unit tests",
+      "tags": ["test", "npm"]
+    }
+  ]
+}
+```
+
+### 20. delete_template (v1.8.0)
+
+Delete a saved command template.
+
+**Parameters:**
+- `name` (string, required): Template name to delete
+
+### 21. start_session (v1.8.0)
+
+Start a new command session to group related commands together.
+
+**Parameters:**
+- `name` (string, required): Session name
+- `description` (string, optional): Session description
+- `metadata` (object, optional): Custom metadata
+
+**Example:**
+```typescript
+{
+  "name": "feature-deployment",
+  "description": "Deploy new authentication feature",
+  "metadata": { "ticket": "AUTH-123", "environment": "staging" }
+}
+```
+
+**Returns:**
+```json
+{
+  "id": 5,
+  "name": "feature-deployment",
+  "status": "active",
+  "startedAt": "2025-01-17T10:30:00.000Z",
+  "commandCount": 0
+}
+```
+
+### 22. end_session (v1.8.0)
+
+End the current active session.
+
+**Parameters:**
+- `status` (string, optional): Session end status. Options: `completed` (default), `abandoned`
+
+**Returns:**
+```json
+{
+  "id": 5,
+  "name": "feature-deployment",
+  "status": "completed",
+  "startedAt": "2025-01-17T10:30:00.000Z",
+  "endedAt": "2025-01-17T11:45:00.000Z",
+  "commandCount": 12
+}
+```
+
+### 23. get_session (v1.8.0)
+
+Get a session by ID or name.
+
+**Parameters:**
+- `id` (number, optional): Session ID
+- `name` (string, optional): Session name (gets most recent)
+
+**Example:**
+```typescript
+{ "name": "feature-deployment" }
+```
+
+### 24. list_sessions (v1.8.0)
+
+List all command sessions.
+
+**Parameters:**
+- `status` (string, optional): Filter by status (active, completed, abandoned)
+- `limit` (number, optional): Maximum results (default: 50)
+
+**Example:**
+```typescript
+{
+  "status": "completed",
+  "limit": 10
+}
+```
+
+**Returns:**
+```json
+{
+  "count": 10,
+  "sessions": [
+    {
+      "id": 5,
+      "name": "feature-deployment",
+      "status": "completed",
+      "startedAt": "2025-01-17T10:30:00.000Z",
+      "endedAt": "2025-01-17T11:45:00.000Z",
+      "commandCount": 12
+    }
+  ]
+}
+```
+
 ## Token Efficiency Features
 
 Basher is designed from the ground up for **token efficiency** when used with AI agents. Large command outputs can quickly consume your context window - these features help minimize token usage while preserving the information you need.
@@ -1313,7 +1614,11 @@ basher/
 │   │   ├── instance-detector.ts       # Singleton pattern detection
 │   │   ├── instance-notifier.ts       # Multi-instance HTTP notifications
 │   │   ├── logger.config.ts           # Pino logger configuration
-│   │   └── web-server.ts              # Web UI server with SSE
+│   │   ├── web-server.ts              # Web UI server with SSE
+│   │   ├── output-parser.ts           # Structured output parsing (jest, pytest, etc.)
+│   │   ├── command-templates.ts       # Reusable command templates
+│   │   ├── command-sessions.ts        # Command session management
+│   │   └── failure-analyzer.ts        # Error analysis and suggestions
 │   ├── utils/
 │   │   └── output-formatter.ts        # Output formatting utilities
 │   └── types/

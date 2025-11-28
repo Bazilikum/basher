@@ -2,6 +2,7 @@
  * HistoryManager class for managing command execution history
  * Uses SQLite with full-text search (FTS5) for searchable command history
  */
+import Database from 'better-sqlite3';
 import type { CommandHistoryEntry } from '../types/index.js';
 import { AdvancedQueries } from './advanced-queries.js';
 export interface HistoryManagerOptions {
@@ -15,6 +16,10 @@ export declare class HistoryManager {
     advanced: AdvancedQueries;
     private maxEntries;
     private maxAgeMs;
+    /**
+     * Get the database instance (for sharing with other managers)
+     */
+    getDatabase(): Database.Database;
     constructor(dbPath?: string, options?: HistoryManagerOptions);
     private initDatabase;
     private migrateDatabase;
