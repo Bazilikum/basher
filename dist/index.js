@@ -363,6 +363,28 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 },
             },
             {
+                name: 'poll_until_complete',
+                description: 'Wait for a background command to complete and return the final result. This is MORE EFFICIENT than repeatedly calling get_process_output because polling happens server-side without consuming your context. Use this instead of manual polling loops.',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        processId: {
+                            type: 'number',
+                            description: 'The process ID of the running command (returned by execute_command)',
+                        },
+                        pollInterval: {
+                            type: 'number',
+                            description: 'How often to check for completion in milliseconds (default: 1000, min: 500)',
+                        },
+                        timeout: {
+                            type: 'number',
+                            description: 'Maximum time to wait in milliseconds (default: 300000 = 5 minutes)',
+                        },
+                    },
+                    required: ['processId'],
+                },
+            },
+            {
                 name: 'advanced_search',
                 description: 'Search command history with advanced filtering and tiered output levels for token efficiency. Use outputLevel to control response size: "summary" (90% token savings), "preview" (first/last lines), "excerpts" (matching lines only), or "full" (complete output). Supports Toon format for additional ~40% savings.',
                 inputSchema: {
@@ -925,7 +947,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                                 command,
                                 cwd: cwd || process.cwd(),
                                 message: 'Command started in background.',
-                                hint: 'Use get_process_output with this processId to monitor progress, or use waitFor parameter next time to wait for specific output.',
+                                recommendations: {
+                                    preferred: 'Use poll_until_complete({ processId }) to wait for completion without wasting context on repeated polling.',
+                                    alternative: 'Next time, use waitFor parameter (e.g., waitFor: "PASS|FAIL") to wait for specific output patterns.',
+                                    avoid: 'Do NOT repeatedly call get_process_output in a loop - this wastes context tokens. Use poll_until_complete instead.',
+                                },
                             }, null, 2),
                         }],
                 };
@@ -1047,6 +1073,133 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                         }, null, 2),
                     },
                 ],
+            };
+        }
+        // Poll until command completes (efficient server-side polling)
+        if (name === 'poll_until_complete') {
+            const params = z.object({
+                processId: z.number(),
+                pollInterval: z.number().min(500).optional().default(1000),
+                timeout: z.number().positive().optional().default(300000),
+            }).parse(args);
+            const { processId, pollInterval, timeout } = params;
+            logger.info({ processId, pollInterval, timeout }, 'Polling until command completes');
+            // Check if already completed (in history)
+            const existingCommand = historyManager.getCommandByProcessId(processId);
+            if (existingCommand) {
+                return {
+                    content: [{
+                            type: 'text',
+                            text: JSON.stringify({
+                                status: 'already_completed',
+                                id: existingCommand.id,
+                                processId: existingCommand.processId,
+                                command: existingCommand.command,
+                                title: existingCommand.title,
+                                exitCode: existingCommand.exitCode,
+                                duration: `${existingCommand.duration}ms`,
+                                success: existingCommand.exitCode === 0,
+                                stdout: existingCommand.stdout,
+                                stderr: existingCommand.stderr,
+                            }, null, 2),
+                        }],
+                };
+            }
+            // Check if process exists
+            if (!processManager.isRunning(processId)) {
+                return {
+                    content: [{
+                            type: 'text',
+                            text: JSON.stringify({
+                                status: 'not_found',
+                                processId,
+                                message: 'Process not found. It may have completed before polling started - check get_command_by_process_id.',
+                            }, null, 2),
+                        }],
+                };
+            }
+            // Poll until complete
+            const startTime = Date.now();
+            const pollResult = await new Promise((resolve) => {
+                const checkCompletion = () => {
+                    // Check timeout
+                    if (Date.now() - startTime > timeout) {
+                        resolve({
+                            status: 'timeout',
+                            error: `Timed out after ${timeout}ms. Command is still running.`,
+                        });
+                        return;
+                    }
+                    // Check if still running
+                    if (processManager.isRunning(processId)) {
+                        // Still running, check again later
+                        setTimeout(checkCompletion, pollInterval);
+                        return;
+                    }
+                    // No longer running - get from history
+                    const completedCommand = historyManager.getCommandByProcessId(processId);
+                    if (completedCommand) {
+                        resolve({
+                            status: 'completed',
+                            data: completedCommand,
+                        });
+                    }
+                    else {
+                        // Give it a moment for the save to complete
+                        setTimeout(() => {
+                            const retryCommand = historyManager.getCommandByProcessId(processId);
+                            if (retryCommand) {
+                                resolve({
+                                    status: 'completed',
+                                    data: retryCommand,
+                                });
+                            }
+                            else {
+                                resolve({
+                                    status: 'completed_but_not_saved',
+                                    error: 'Command completed but history entry not found.',
+                                });
+                            }
+                        }, 500);
+                    }
+                };
+                checkCompletion();
+            });
+            if (pollResult.status === 'completed' && pollResult.data) {
+                const cmd = pollResult.data;
+                return {
+                    content: [{
+                            type: 'text',
+                            text: JSON.stringify({
+                                status: 'completed',
+                                id: cmd.id,
+                                processId: cmd.processId,
+                                command: cmd.command,
+                                title: cmd.title,
+                                exitCode: cmd.exitCode,
+                                duration: `${cmd.duration}ms`,
+                                polledFor: `${Date.now() - startTime}ms`,
+                                success: cmd.exitCode === 0,
+                                stdout: cmd.stdout,
+                                stderr: cmd.stderr,
+                            }, null, 2),
+                        }],
+                };
+            }
+            // Timeout or error
+            return {
+                content: [{
+                        type: 'text',
+                        text: JSON.stringify({
+                            status: pollResult.status,
+                            processId,
+                            polledFor: `${Date.now() - startTime}ms`,
+                            error: pollResult.error,
+                            hint: pollResult.status === 'timeout'
+                                ? 'Command is still running. You can call poll_until_complete again or use terminate_command to stop it.'
+                                : 'Try get_command_by_process_id to check if the command completed.',
+                        }, null, 2),
+                    }],
             };
         }
         // Search command history
