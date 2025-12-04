@@ -213,10 +213,9 @@ export class CommandOutputPanel {
 
                   resolve(result);
                 } else if (!result.success) {
-                  // Command completed or not found
+                  // Command completed or not found - fetch final result from history
                   this.stopPolling();
-                  // Final update when command completes
-                  this._update();
+                  this.fetchCompletedCommand();
                   resolve(result);
                 }
               } catch (error) {
@@ -240,6 +239,95 @@ export class CommandOutputPanel {
       clearInterval(this._pollInterval);
       this._pollInterval = undefined;
       this._isRunning = false;
+    }
+  }
+
+  private async fetchCompletedCommand(): Promise<void> {
+    try {
+      const http = await import('http');
+      const config = vscode.workspace.getConfiguration('commandNConquer');
+      const serverUrl = config.get<string>('serverUrl') || 'http://localhost:3000';
+
+      // Fetch completed command from history by process ID
+      const url = new URL(`${serverUrl}/api/command/by-process/${this._commandId}`);
+
+      await new Promise((resolve, reject) => {
+        http.get(url.toString(), (res) => {
+          let data = '';
+          res.on('data', (chunk) => data += chunk);
+          res.on('end', () => {
+            try {
+              const result = JSON.parse(data);
+              if (result.success && result.data) {
+                // Update command data with final result
+                this._commandData = {
+                  id: result.data.id,
+                  command: result.data.command,
+                  cwd: result.data.cwd,
+                  timestamp: result.data.timestamp,
+                  exitCode: result.data.exitCode,
+                  duration: result.data.duration,
+                  stdout: result.data.stdout || '',
+                  stderr: result.data.stderr || '',
+                };
+
+                // Update panel title with database ID
+                this._panel.title = `#${result.data.id} ${result.data.command}`;
+
+                // Send completion update to webview
+                this._panel.webview.postMessage({
+                  command: 'commandCompleted',
+                  id: result.data.id,
+                  exitCode: result.data.exitCode,
+                  duration: result.data.duration,
+                  stdout: result.data.stdout || '',
+                  stderr: result.data.stderr || '',
+                  success: result.data.exitCode === 0,
+                });
+
+                resolve(result);
+              } else {
+                // Fallback: just mark as completed with current data
+                this._panel.webview.postMessage({
+                  command: 'commandCompleted',
+                  id: this._commandId,
+                  exitCode: this._commandData.exitCode,
+                  duration: this._commandData.duration,
+                  stdout: this._commandData.stdout,
+                  stderr: this._commandData.stderr,
+                  success: this._commandData.exitCode === 0,
+                });
+                resolve(result);
+              }
+            } catch (error) {
+              reject(error);
+            }
+          });
+        }).on('error', (error) => {
+          // On error, just mark as completed with current data
+          this._panel.webview.postMessage({
+            command: 'commandCompleted',
+            id: this._commandId,
+            exitCode: this._commandData.exitCode,
+            duration: this._commandData.duration,
+            stdout: this._commandData.stdout,
+            stderr: this._commandData.stderr,
+            success: this._commandData.exitCode === 0,
+          });
+          resolve(null);
+        });
+      });
+    } catch (error) {
+      // Fallback: just update UI to show completed
+      this._panel.webview.postMessage({
+        command: 'commandCompleted',
+        id: this._commandId,
+        exitCode: this._commandData.exitCode,
+        duration: this._commandData.duration,
+        stdout: this._commandData.stdout,
+        stderr: this._commandData.stderr,
+        success: this._commandData.exitCode === 0,
+      });
     }
   }
 
@@ -694,8 +782,58 @@ export class CommandOutputPanel {
                     // Update output content dynamically without resetting tabs
                     updateOutputContent(message.stdout, message.stderr, message.duration);
                     break;
+                case 'commandCompleted':
+                    // Command finished - update status in place
+                    handleCommandCompleted(message);
+                    break;
             }
         });
+
+        function handleCommandCompleted(data) {
+            // Update status display
+            const statusElements = document.querySelectorAll('.status');
+            const statusSymbol = data.success ? '✓' : '✗';
+            const statusColor = data.success ? '#4caf50' : '#f44336';
+            statusElements.forEach(el => {
+                el.textContent = data.exitCode + ' ' + statusSymbol;
+                el.style.color = statusColor;
+            });
+
+            // Update ID if changed
+            const idElements = document.querySelectorAll('.info-value');
+            idElements.forEach(el => {
+                const parent = el.parentElement;
+                if (parent && parent.querySelector('.info-label')?.textContent === 'ID:') {
+                    el.textContent = '#' + data.id;
+                }
+            });
+
+            // Update duration
+            const durationElements = document.querySelectorAll('.info-value');
+            durationElements.forEach(el => {
+                const parent = el.parentElement;
+                if (parent && parent.querySelector('.info-label')?.textContent === 'Duration:') {
+                    el.textContent = data.duration + 'ms';
+                }
+            });
+
+            // Final output update
+            updateOutputContent(data.stdout, data.stderr, data.duration);
+
+            // Show completion notification in the panel
+            const header = document.querySelector('.header');
+            if (header) {
+                // Add a subtle completion indicator
+                let indicator = document.querySelector('.completion-indicator');
+                if (!indicator) {
+                    indicator = document.createElement('div');
+                    indicator.className = 'completion-indicator';
+                    indicator.style.cssText = 'position: absolute; top: 0; left: 0; right: 0; height: 3px; background: ' + statusColor + '; animation: fadeIn 0.3s ease;';
+                    header.style.position = 'relative';
+                    header.appendChild(indicator);
+                }
+            }
+        }
 
         function updateOutputContent(stdout, stderr, duration) {
             // Update duration display

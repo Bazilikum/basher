@@ -100,6 +100,24 @@ export class WebServer {
                 res.status(500).json({ success: false, error: 'Failed to fetch command' });
             }
         });
+        // API: Get command by process ID (for looking up completed background commands)
+        this.app.get('/api/command/by-process/:processId', (req, res) => {
+            try {
+                const processId = parseInt(req.params.processId);
+                if (isNaN(processId)) {
+                    return res.status(400).json({ success: false, error: 'Invalid process ID' });
+                }
+                const command = this.historyManager.getCommandByProcessId(processId);
+                if (!command) {
+                    return res.status(404).json({ success: false, error: 'Command not found for this process ID' });
+                }
+                res.json({ success: true, data: command });
+            }
+            catch (error) {
+                logger.error({ error, processId: req.params.processId }, 'Failed to fetch command by process ID');
+                res.status(500).json({ success: false, error: 'Failed to fetch command' });
+            }
+        });
         // API: Search command history
         this.app.get('/api/search', (req, res) => {
             try {
