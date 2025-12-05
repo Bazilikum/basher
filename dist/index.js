@@ -750,6 +750,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                     status: 'completed',
                 };
                 const commandId = historyManager.saveCommand(historyEntry);
+                // IMPORTANT: Unregister from processManager AFTER saving to history
+                // This ensures VS Code extension can find the command in history when it polls
+                processManager.unregister(result.processId);
                 if (webServer) {
                     webServer.broadcast('command_executed', { ...historyEntry, id: commandId });
                 }
@@ -1732,6 +1735,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 status: 'completed',
             };
             const commandId = historyManager.saveCommand(historyEntry);
+            // IMPORTANT: Unregister from processManager AFTER saving to history
+            processManager.unregister(result.processId);
             // Add to session if active
             const activeSessionId = sessionManager.getActiveSessionId();
             if (activeSessionId) {

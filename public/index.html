@@ -690,14 +690,43 @@
     let eventSource = null;
     let selectedCommands = new Map(); // Key: command ID, Value: command object
     let allCommands = [];
+    let runningCommands = new Map(); // Key: processId, Value: running command object
 
     // Initialize
     document.addEventListener('DOMContentLoaded', () => {
       checkNotificationPermission();
       connectSSE();
       loadStats();
+      loadRunningCommands();
       loadHistory();
+
+      // Refresh running commands periodically to update durations
+      setInterval(() => {
+        if (runningCommands.size > 0) {
+          renderCommandList(allCommands);
+        }
+      }, 1000);
     });
+
+    async function loadRunningCommands() {
+      try {
+        const res = await fetch('/api/running');
+        const json = await res.json();
+        if (json.success && json.data) {
+          runningCommands.clear();
+          json.data.forEach(cmd => {
+            runningCommands.set(cmd.id, {
+              ...cmd,
+              isRunning: true,
+              timestamp: new Date(Date.now() - cmd.duration).toISOString()
+            });
+          });
+          renderCommandList(allCommands);
+        }
+      } catch (error) {
+        console.error('Failed to load running commands:', error);
+      }
+    }
 
     function checkNotificationPermission() {
       if ('Notification' in window && Notification.permission === 'default') {
@@ -739,15 +768,50 @@
         const data = JSON.parse(event.data);
         console.log('SSE Event:', data);
 
+        if (data.type === 'command_started') {
+          // New command started - add to running commands
+          const cmd = data.data;
+          runningCommands.set(cmd.processId, {
+            id: cmd.processId,
+            processId: cmd.processId,
+            command: cmd.command,
+            title: cmd.title,
+            cwd: cmd.cwd,
+            isRunning: true,
+            duration: 0,
+            timestamp: new Date().toISOString()
+          });
+          renderCommandList(allCommands);
+        }
+
+        if (data.type === 'command_output') {
+          // Update running command output
+          const cmd = runningCommands.get(data.data.processId);
+          if (cmd) {
+            cmd.duration = Date.now() - new Date(cmd.timestamp).getTime();
+            // Update output panel if selected
+            if (selectedCommands.has(`running-${cmd.processId}`)) {
+              updateRunningOutputPanel(cmd.processId, data.data);
+            }
+          }
+        }
+
         if (data.type === 'command_executed') {
+          // Command completed - remove from running, add to history
+          const cmd = data.data;
+
+          // Remove from running commands (match by processId if available)
+          if (cmd.processId) {
+            runningCommands.delete(cmd.processId);
+          }
+
           loadStats();
           loadHistory();
 
-          const cmd = data.data;
           const status = cmd.exitCode === 0 ? 'completed successfully' : 'failed';
           showNotification(
             `Command ${status}`,
-            `${cmd.command.substring(0, 50)}...\nDuration: ${cmd.duration}ms`,
+            `${(cmd.title || cmd.command).substring(0, 50)}...\nDuration: ${cmd.duration}ms`,
             cmd.exitCode === 0 ? 'success' : 'error'
           );
 
@@ -760,6 +824,7 @@
         if (data.type === 'history_cleared') {
           // Clear local state
           allCommands = [];
+          runningCommands.clear();
           selectedCommands.clear();
 
           // Re-render UI
@@ -827,7 +892,11 @@
     function renderCommandList(commands) {
       const container = document.getElementById('command-list');
 
-      if (commands.length === 0) {
+      // Combine running commands with history
+      const runningArray = Array.from(runningCommands.values());
+      const allItems = [...runningArray, ...commands];
+
+      if (allItems.length === 0) {
         container.innerHTML = `
           <div class="empty-state">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
@@ -840,10 +909,38 @@
         return;
       }
 
-      const html = commands.map(cmd => {
+      // Render running commands first
+      let html = '';
+
+      // Running commands section
+      if (runningArray.length > 0) {
+        html += runningArray.map(cmd => {
+          const displayTitle = cmd.title || cmd.command;
+          const isSelected = selectedCommands.has(`running-${cmd.processId}`);
+          const duration = cmd.duration || (Date.now() - new Date(cmd.timestamp).getTime());
+
+          return `
+            <div class="command-item running ${isSelected ? 'selected' : ''}" onclick="toggleRunningCommandSelection(${cmd.processId})">
+              <div class="command-header">
+                <span class="command-time">${new Date(cmd.timestamp).toLocaleString()}</span>
+                <span class="status-badge running">Running</span>
+              </div>
+              <div class="command-text">P${cmd.processId} ${escapeHtml(displayTitle)}</div>
+              <div class="command-meta">
+                <span>Duration: ${Math.round(duration / 1000)}s</span>
+                <span>PID: ${cmd.pid || cmd.processId}</span>
+              </div>
+            </div>
+          `;
+        }).join('');
+      }
+
+      // Completed commands
+      html += commands.map(cmd => {
         const isSelected = selectedCommands.has(cmd.id);
         const statusClass = cmd.exitCode === 0 ? 'success' : 'error';
         const statusText = cmd.exitCode === 0 ? 'Success' : 'Error';
+        const displayTitle = cmd.title || cmd.command;
 
         return `
           <div class="command-item ${statusClass} ${isSelected ? 'selected' : ''}" onclick="toggleCommandSelection(${cmd.id})">
@@ -854,7 +951,7 @@
               <span class="command-time">${new Date(cmd.timestamp).toLocaleString()}</span>
               <span class="status-badge ${statusClass}">${statusText}</span>
             </div>
-            <div class="command-text">#${cmd.id} ${escapeHtml(cmd.command)}</div>
+            <div class="command-text">#${cmd.id} ${escapeHtml(displayTitle)}</div>
             <div class="command-meta">
               <span>Exit: ${cmd.exitCode}</span>
               <span>Duration: ${cmd.duration}ms</span>
@@ -864,6 +961,149 @@
       }).join('');
 
       container.innerHTML = html;
+    }
+
+    function toggleRunningCommandSelection(processId) {
+      const key = `running-${processId}`;
+      if (selectedCommands.has(key)) {
+        selectedCommands.delete(key);
+        removeRunningOutputPanel(processId);
+      } else {
+        const cmd = runningCommands.get(processId);
+        if (cmd) {
+          selectedCommands.set(key, cmd);
+          addRunningOutputPanel(processId, cmd);
+        }
+      }
+      renderCommandList(allCommands);
+      updateOutputCount();
+    }
+
+    function addRunningOutputPanel(processId, cmd) {
+      const grid = document.getElementById('output-grid');
+
+      // Remove empty state if present
+      const emptyState = grid.querySelector('.empty-state');
+      if (emptyState) {
+        emptyState.remove();
+      }
+
+      const displayTitle = cmd.title || cmd.command;
+      const panel = document.createElement('div');
+      panel.className = 'output-panel';
+      panel.id = `output-running-${processId}`;
+      panel.innerHTML = `
+        <div class="output-header">
+          <div class="output-title">⏳ ${escapeHtml(displayTitle)}</div>
+          <div class="output-actions">
+            <span class="status-badge running">Running</span>
+            <button class="output-close" onclick="removeRunningOutputPanel(${processId})">×</button>
+          </div>
+        </div>
+        <div class="output-tabs">
+          <button class="output-tab active" onclick="switchRunningOutputTab(${processId}, 'stdout')">STDOUT</button>
+          <button class="output-tab" onclick="switchRunningOutputTab(${processId}, 'stderr')">STDERR</button>
+        </div>
+        <div class="output-content stdout" id="content-running-${processId}">(waiting for output...)</div>
+      `;
+
+      grid.appendChild(panel);
+
+      // Start polling for output
+      startPollingRunningOutput(processId);
+    }
+
+    function removeRunningOutputPanel(processId) {
+      const panel = document.getElementById(`output-running-${processId}`);
+      if (panel) {
+        panel.remove();
+      }
+      selectedCommands.delete(`running-${processId}`);
+      stopPollingRunningOutput(processId);
+      renderCommandList(allCommands);
+      updateOutputCount();
+
+      // Show empty state if no panels left
+      const grid = document.getElementById('output-grid');
+      if (grid.children.length === 0) {
+        grid.innerHTML = `
+          <div class="empty-state">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <path d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <h3>No outputs selected</h3>
+            <p>Click on commands in the left panel to view their output</p>
+          </div>
+        `;
+      }
+    }
+
+    const runningOutputPolls = new Map();
+
+    function startPollingRunningOutput(processId) {
+      if (runningOutputPolls.has(processId)) return;
+
+      const poll = async () => {
+        try {
+          const res = await fetch(`/api/process/${processId}/output`);
+          const json = await res.json();
+
+          if (json.success && json.data) {
+            const content = document.getElementById(`content-running-${processId}`);
+            if (content) {
+              const cmd = runningCommands.get(processId);
+              content.innerHTML = formatOutput(json.data.stdout || '(no output yet)', 'stdout', cmd);
+              // Auto-scroll to bottom
+              content.scrollTop = content.scrollHeight;
+            }
+          } else {
+            // Command may have completed
+            stopPollingRunningOutput(processId);
+          }
+        } catch (error) {
+          console.error('Failed to poll running output:', error);
+        }
+      };
+
+      // Poll immediately and then every 500ms
+      poll();
+      const interval = setInterval(poll, 500);
+      runningOutputPolls.set(processId, interval);
+    }
+
+    function stopPollingRunningOutput(processId) {
+      const interval = runningOutputPolls.get(processId);
+      if (interval) {
+        clearInterval(interval);
+        runningOutputPolls.delete(processId);
+      }
+    }
+
+    function switchRunningOutputTab(processId, type) {
+      const panel = document.getElementById(`output-running-${processId}`);
+      if (!panel) return;
+
+      const tabs = panel.querySelectorAll('.output-tab');
+      const content = panel.querySelector('.output-content');
+
+      tabs.forEach(tab => tab.classList.remove('active'));
+      const tabIndex = type === 'stdout' ? 1 : 2;
+      panel.querySelector(`.output-tab:nth-child(${tabIndex})`).classList.add('active');
+
+      // Store current tab type as data attribute
+      content.setAttribute('data-tab', type);
+    }
+
+    function updateRunningOutputPanel(processId, data) {
+      const content = document.getElementById(`content-running-${processId}`);
+      if (!content) return;
+
+      const currentTab = content.getAttribute('data-tab') || 'stdout';
+      const output = currentTab === 'stderr' ? data.stderr : data.stdout;
+      const cmd = runningCommands.get(processId);
+
+      content.innerHTML = formatOutput(output || '(no output yet)', currentTab, cmd);
+      content.scrollTop = content.scrollHeight;
     }
 
     function toggleCommandSelection(cmdId) {
@@ -892,12 +1132,13 @@
         emptyState.remove();
       }
 
+      const displayTitle = cmd.title || cmd.command;
       const panel = document.createElement('div');
       panel.className = 'output-panel';
       panel.id = `output-${cmdId}`;
       panel.innerHTML = `
         <div class="output-header">
-          <div class="output-title">${escapeHtml(cmd.command)}</div>
+          <div class="output-title">${escapeHtml(displayTitle)}</div>
           <div class="output-actions">
             <button class="btn-rerun-output" onclick="rerunCommand(${cmdId})" title="Rerun this command">▶ Rerun</button>
             <button class="output-close" onclick="removeOutputPanel(${cmdId})">×</button>

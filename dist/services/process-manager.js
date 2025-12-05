@@ -165,14 +165,21 @@ class ProcessManager {
         logger.info({ processId, pid: childProcess.pid, command, title }, 'Process registered');
         // Save state for potential adoption
         this.saveState();
-        // Clean up when process exits
-        childProcess.on('exit', () => {
-            this.unregister(processId);
-        });
+        // Note: We intentionally do NOT unregister on 'exit' event here.
+        // The 'exit' event fires when the process terminates, but BEFORE the 'close' event
+        // which fires after all stdio streams are closed and the result is saved to history.
+        // Unregistering here causes a race condition where the VS Code extension polls
+        // for process output, gets "not found", tries to fetch from history, but the
+        // history entry hasn't been saved yet (resulting in "terminated error -1").
+        //
+        // Instead, unregistration happens via the 'close' event handler in command-executor.ts
+        // through the explicit unregister() call after the promise resolves.
         return processId;
     }
     /**
-     * Unregister a process (called when it exits)
+     * Unregister a process (called after command is saved to history)
+     * This should be called AFTER the command result is saved to ensure
+     * the VS Code extension can find the command in history when it polls.
      */
     unregister(processId) {
         const proc = this.processes.get(processId);

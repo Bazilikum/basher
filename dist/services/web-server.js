@@ -224,6 +224,9 @@ export class WebServer {
                             status: 'completed',
                         };
                         const id = this.historyManager.saveCommand(historyEntry);
+                        // IMPORTANT: Unregister from processManager AFTER saving to history
+                        // This ensures VS Code extension can find the command in history when it polls
+                        processManager.unregister(result.processId);
                         // Broadcast to SSE clients
                         this.broadcast('command_executed', { ...historyEntry, id });
                     }).catch(error => {
@@ -254,6 +257,8 @@ export class WebServer {
                     status: 'completed',
                 };
                 const id = this.historyManager.saveCommand(historyEntry);
+                // IMPORTANT: Unregister from processManager AFTER saving to history
+                processManager.unregister(result.processId);
                 // Broadcast to SSE clients
                 this.broadcast('command_executed', { ...historyEntry, id });
                 res.json({

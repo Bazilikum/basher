@@ -48,9 +48,11 @@ declare class ProcessManager {
      */
     register(command: string, childProcess: ChildProcess, title?: string, cwd?: string): number;
     /**
-     * Unregister a process (called when it exits)
+     * Unregister a process (called after command is saved to history)
+     * This should be called AFTER the command result is saved to ensure
+     * the VS Code extension can find the command in history when it polls.
      */
-    private unregister;
+    unregister(processId: number): void;
     /**
      * Kill a running process
      */
