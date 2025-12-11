@@ -1,6 +1,9 @@
 /**
  * Web server for viewing logs, command history, and statistics
  * Integrated into the MCP server with real-time updates via SSE
+ *
+ * SECURITY: This server is designed for localhost-only access.
+ * All requests must originate from localhost (127.0.0.1 or ::1).
  */
 import type { HistoryManager } from './history-manager.js';
 export declare class WebServer {
@@ -25,10 +28,12 @@ export declare class WebServer {
     private findFreePort;
     /**
      * Check if a port is available
+     * SECURITY: Only bind to localhost (127.0.0.1)
      */
     private isPortAvailable;
     /**
      * Start the web server with automatic port detection
+     * SECURITY: Server binds to 127.0.0.1 only (localhost)
      */
     start(): Promise<void>;
     /**

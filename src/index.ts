@@ -43,6 +43,7 @@ import {
 import { CommandTemplateManager, type CreateTemplateInput } from './services/command-templates.js';
 import { CommandSessionManager } from './services/command-sessions.js';
 import { analyzeFailure, diffOutputs } from './services/failure-analyzer.js';
+import { whitelistManager, extractCommandBase } from './services/whitelist-manager.js';
 
 // Read package.json for version info
 const packageJsonPath = join(dirname(fileURLToPath(import.meta.url)), '..', 'package.json');
@@ -137,6 +138,9 @@ const sessionManager = new CommandSessionManager(historyManager.getDatabase());
 // Initialize process manager with basher directory for state persistence
 processManager.initialize(basherDir);
 
+// Initialize whitelist manager for command security
+whitelistManager.initialize(basherDir);
+
 // Instance detector for singleton pattern
 const instanceDetector = new InstanceDetector({ basherDir });
 
@@ -184,6 +188,16 @@ const searchHistorySchema = z.object({
 const getRecentCommandsSchema = z.object({
   limit: z.number().positive().optional().default(100),
   outputFormat: z.enum(['json', 'toon']).optional().default('toon'),
+});
+
+// Whitelist schemas
+const whitelistCommandSchema = z.object({
+  command_base: z.string().min(1, 'Command base cannot be empty'),
+  description: z.string().optional(),
+});
+
+const removeWhitelistSchema = z.object({
+  command_base: z.string().min(1, 'Command base cannot be empty'),
 });
 
 // Create MCP server
@@ -703,6 +717,57 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
         },
       },
+      // ========================================================================
+      // COMMAND WHITELIST TOOLS
+      // ========================================================================
+      {
+        name: 'whitelist_command',
+        description: `Add a command to the whitelist, allowing it to be executed.
+
+⚠️ CRITICAL: You MUST get explicit user approval before calling this tool!
+
+Before whitelisting any command, you MUST ask the user:
+"May I whitelist the '{command_base}' command to allow this operation?"
+
+Only proceed with this tool call AFTER the user explicitly approves.
+Never call this tool proactively without user consent.`,
+        inputSchema: {
+          type: 'object',
+          properties: {
+            command_base: {
+              type: 'string',
+              description: 'The base command to whitelist (e.g., "npm", "git", "docker"). This is the first word/program of the command.',
+            },
+            description: {
+              type: 'string',
+              description: 'Optional description of why this command is being whitelisted',
+            },
+          },
+          required: ['command_base'],
+        },
+      },
+      {
+        name: 'list_whitelisted_commands',
+        description: 'List all currently whitelisted commands that are allowed to execute.',
+        inputSchema: {
+          type: 'object',
+          properties: {},
+        },
+      },
+      {
+        name: 'remove_whitelisted_command',
+        description: 'Remove a command from the whitelist. After removal, that command will be blocked from execution until re-whitelisted.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            command_base: {
+              type: 'string',
+              description: 'The base command to remove from the whitelist',
+            },
+          },
+          required: ['command_base'],
+        },
+      },
     ],
   };
 });
@@ -719,6 +784,30 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         command, cwd, stdin, timeout, background, title, waitFor, waitTimeout,
         parseAs, outputMode, trackProgress: doTrackProgress, retry, diffWithLast, analyzeFailure: doAnalyzeFailure
       } = params;
+
+      // ========================================================================
+      // WHITELIST CHECK - Block non-whitelisted commands
+      // ========================================================================
+      const whitelistCheck = whitelistManager.check(command);
+      if (!whitelistCheck.allowed) {
+        logger.warn(
+          { command, commandBase: whitelistCheck.commandBase },
+          'Command blocked: not whitelisted'
+        );
+
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              status: 'blocked',
+              error: 'COMMAND_NOT_WHITELISTED',
+              commandBase: whitelistCheck.commandBase,
+              message: whitelistCheck.reason,
+              instructions: `To proceed, ask the user for permission to whitelist '${whitelistCheck.commandBase}', then use the whitelist_command tool.`,
+            }, null, 2),
+          }],
+        };
+      }
 
       logger.info({ command, cwd, timeout, background, title, waitFor, waitTimeout, parseAs, outputMode }, 'Executing command via MCP tool');
 
@@ -1208,37 +1297,54 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       logger.info({ processId, pollInterval, timeout }, 'Polling until command completes');
 
-      // Check if already completed (in history)
-      const existingCommand = historyManager.getCommandByProcessId(processId);
-      if (existingCommand) {
-        return {
-          content: [{
-            type: 'text',
-            text: JSON.stringify({
-              status: 'already_completed',
-              id: existingCommand.id,
-              processId: existingCommand.processId,
-              command: existingCommand.command,
-              title: existingCommand.title,
-              exitCode: existingCommand.exitCode,
-              duration: `${existingCommand.duration}ms`,
-              success: existingCommand.exitCode === 0,
-              stdout: existingCommand.stdout,
-              stderr: existingCommand.stderr,
-            }, null, 2),
-          }],
-        };
-      }
+      // IMPORTANT: Check if process is currently running FIRST
+      // Process IDs are reused across sessions, so we can't rely on history lookup
+      // before confirming the process isn't currently running
+      if (processManager.isRunning(processId)) {
+        // Process is running - proceed to poll loop below
+        logger.debug({ processId }, 'Process is running, will poll for completion');
+      } else {
+        // Process is not running - check if it completed recently (in history)
+        const existingCommand = historyManager.getCommandByProcessId(processId);
+        if (existingCommand) {
+          // Verify this is a recent command (within last hour) to avoid returning stale data
+          // from previous sessions where process IDs were reused
+          const commandTime = new Date(existingCommand.timestamp).getTime();
+          const oneHourAgo = Date.now() - (60 * 60 * 1000);
 
-      // Check if process exists
-      if (!processManager.isRunning(processId)) {
+          if (commandTime > oneHourAgo) {
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  status: 'already_completed',
+                  id: existingCommand.id,
+                  processId: existingCommand.processId,
+                  command: existingCommand.command,
+                  title: existingCommand.title,
+                  exitCode: existingCommand.exitCode,
+                  duration: `${existingCommand.duration}ms`,
+                  success: existingCommand.exitCode === 0,
+                  stdout: existingCommand.stdout,
+                  stderr: existingCommand.stderr,
+                }, null, 2),
+              }],
+            };
+          } else {
+            // Found a stale command from a previous session - process ID was reused
+            logger.warn({ processId, foundCommandId: existingCommand.id, foundTimestamp: existingCommand.timestamp },
+              'Found stale command with reused process ID');
+          }
+        }
+
+        // Process not running and no recent history entry
         return {
           content: [{
             type: 'text',
             text: JSON.stringify({
               status: 'not_found',
               processId,
-              message: 'Process not found. It may have completed before polling started - check get_command_by_process_id.',
+              message: 'Process not found. It may have completed before polling started, or the process ID may be from a previous session.',
             }, null, 2),
           }],
         };
@@ -1505,7 +1611,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 {
                   status: 'not_found',
                   processId,
-                  message: 'No completed command found with this process ID. The command may not have been saved to history yet, or the process ID may be invalid.',
+                  message: 'No completed command found with this process ID. The command may not have been saved to history yet, or the process ID may be from a previous session.',
                 },
                 null,
                 2
@@ -1513,6 +1619,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             },
           ],
         };
+      }
+
+      // Check if this is a stale result from a previous session
+      // Process IDs are reused across sessions, so we warn if the command is old
+      const commandTime = new Date(command.timestamp).getTime();
+      const oneHourAgo = Date.now() - (60 * 60 * 1000);
+      const isStale = commandTime < oneHourAgo;
+
+      if (isStale) {
+        logger.warn({ processId, foundCommandId: command.id, foundTimestamp: command.timestamp },
+          'Found potentially stale command - process ID may have been reused');
       }
 
       return {
@@ -1535,6 +1652,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 stderr: command.stderr,
                 stdoutLength: command.stdout?.length || 0,
                 stderrLength: command.stderr?.length || 0,
+                warning: isStale ? 'This result may be from a previous session. Process IDs are reused across restarts.' : undefined,
               },
               null,
               2
@@ -2244,6 +2362,69 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             count: sessions.length,
             activeSessionId: sessionManager.getActiveSessionId(),
             sessions,
+          }, null, 2),
+        }],
+      };
+    }
+
+    // ========================================================================
+    // WHITELIST TOOLS
+    // ========================================================================
+
+    if (name === 'whitelist_command') {
+      const params = whitelistCommandSchema.parse(args);
+      const { command_base, description } = params;
+
+      logger.info({ commandBase: command_base, description }, 'Whitelisting command');
+
+      const result = whitelistManager.add(command_base, description);
+
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            success: result.success,
+            message: result.message,
+            commandBase: command_base,
+            whitelistPath: whitelistManager.getConfigPath(),
+          }, null, 2),
+        }],
+      };
+    }
+
+    if (name === 'list_whitelisted_commands') {
+      logger.info('Listing whitelisted commands');
+
+      const whitelist = whitelistManager.list();
+
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            enabled: whitelist.enabled,
+            count: whitelist.commands.length,
+            commands: whitelist.commands,
+            configPath: whitelistManager.getConfigPath(),
+          }, null, 2),
+        }],
+      };
+    }
+
+    if (name === 'remove_whitelisted_command') {
+      const params = removeWhitelistSchema.parse(args);
+      const { command_base } = params;
+
+      logger.info({ commandBase: command_base }, 'Removing command from whitelist');
+
+      const result = whitelistManager.remove(command_base);
+
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            success: result.success,
+            message: result.message,
+            commandBase: command_base,
           }, null, 2),
         }],
       };

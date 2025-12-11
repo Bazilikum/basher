@@ -1,10 +1,16 @@
 /**
  * Web server for viewing logs, command history, and statistics
  * Integrated into the MCP server with real-time updates via SSE
+ *
+ * SECURITY: This server is designed for localhost-only access.
+ * All requests must originate from localhost (127.0.0.1 or ::1).
  */
 
-import express, { Request, Response } from 'express';
+import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
+import { z, ZodError } from 'zod';
 import { readFileSync, existsSync, writeFileSync, mkdirSync, appendFileSync } from 'fs';
 import { join, dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
@@ -14,6 +20,134 @@ import type { HistoryManager } from './history-manager.js';
 import { executeCommand } from './command-executor.js';
 import { processManager } from './process-manager.js';
 import logger from './logger.config.js';
+
+// ============================================================================
+// SECURITY MIDDLEWARE
+// ============================================================================
+
+/**
+ * Middleware to ensure requests only come from localhost.
+ * Rejects all non-localhost connections with 403 Forbidden.
+ */
+function localhostOnly(req: Request, res: Response, next: NextFunction): void {
+  const ip = req.ip || req.socket.remoteAddress || '';
+  const localAddresses = ['127.0.0.1', '::1', '::ffff:127.0.0.1'];
+
+  if (localAddresses.includes(ip)) {
+    next();
+  } else {
+    logger.warn({ ip, path: req.path }, 'Rejected non-localhost request');
+    res.status(403).json({
+      success: false,
+      error: 'Access denied: localhost connections only'
+    });
+  }
+}
+
+/**
+ * General rate limiter for all API endpoints
+ */
+const generalLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 200, // 200 requests per minute
+  message: { success: false, error: 'Too many requests, please try again later' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+/**
+ * Stricter rate limiter for command execution
+ */
+const executeLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 60, // 60 command executions per minute
+  message: { success: false, error: 'Too many command executions, please slow down' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+/**
+ * Very strict limiter for destructive operations
+ */
+const destructiveLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 10, // 10 destructive operations per minute
+  message: { success: false, error: 'Too many destructive operations' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// ============================================================================
+// INPUT VALIDATION SCHEMAS
+// ============================================================================
+
+const executeCommandWebSchema = z.object({
+  command: z.string().min(1, 'Command cannot be empty').max(10000),
+  cwd: z.string().max(1000).optional(),
+  stdin: z.string().optional(),
+  timeout: z.number().positive().optional(),
+  background: z.boolean().optional().default(true),
+  title: z.string().max(500).optional(),
+});
+
+const searchQuerySchema = z.object({
+  q: z.string().min(1).max(1000),
+  limit: z.coerce.number().int().positive().max(1000).optional().default(50),
+});
+
+const paginationSchema = z.object({
+  limit: z.coerce.number().int().positive().max(1000).optional().default(100),
+});
+
+const idParamSchema = z.object({
+  id: z.coerce.number().int().positive(),
+});
+
+const processIdParamSchema = z.object({
+  processId: z.coerce.number().int().positive(),
+});
+
+/**
+ * Validation middleware for request body
+ */
+function validateBody<T>(schema: z.ZodSchema<T>) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    try {
+      req.body = schema.parse(req.body);
+      next();
+    } catch (error) {
+      if (error instanceof ZodError) {
+        return res.status(400).json({
+          success: false,
+          error: 'Validation failed',
+          details: error.errors.map(e => `${e.path.join('.')}: ${e.message}`),
+        });
+      }
+      next(error);
+    }
+  };
+}
+
+/**
+ * Validation middleware for URL parameters
+ */
+function validateParams<T>(schema: z.ZodSchema<T>) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    try {
+      req.params = schema.parse(req.params) as any;
+      next();
+    } catch (error) {
+      if (error instanceof ZodError) {
+        return res.status(400).json({
+          success: false,
+          error: 'Invalid URL parameters',
+          details: error.errors.map(e => `${e.path.join('.')}: ${e.message}`),
+        });
+      }
+      next(error);
+    }
+  };
+}
 
 // Read package.json for version info
 const packageJsonPath = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'package.json');
@@ -56,14 +190,63 @@ export class WebServer {
   }
 
   private setupMiddleware(): void {
-    this.app.use(cors());
-    this.app.use(express.json());
+    // ========================================================================
+    // SECURITY MIDDLEWARE CHAIN (order matters!)
+    // ========================================================================
 
-    // Serve static files from the public directory relative to this module
+    // 1. Localhost-only access (first line of defense)
+    this.app.use(localhostOnly);
+
+    // 2. Security headers (helmet)
+    this.app.use(helmet({
+      contentSecurityPolicy: {
+        directives: {
+          defaultSrc: ["'self'"],
+          scriptSrc: ["'self'", "'unsafe-inline'"],  // Needed for inline scripts in index.html
+          styleSrc: ["'self'", "'unsafe-inline'"],   // Needed for inline styles
+          imgSrc: ["'self'", "data:"],
+          connectSrc: ["'self'"],
+          fontSrc: ["'self'"],
+          objectSrc: ["'none'"],
+          frameAncestors: ["'none'"],
+        }
+      },
+      frameguard: { action: 'deny' },
+      noSniff: true,
+      xssFilter: true,
+      hsts: false, // Disable HSTS for localhost HTTP
+    }));
+
+    // 3. Rate limiting for API endpoints
+    this.app.use('/api/', generalLimiter);
+
+    // 4. CORS: Only allow localhost origins
+    this.app.use(cors({
+      origin: (origin, callback) => {
+        // Allow requests with no origin (same-origin, curl, Postman, etc.)
+        if (!origin) {
+          return callback(null, true);
+        }
+        // Allow localhost on any port
+        if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
+          return callback(null, true);
+        }
+        logger.warn({ origin }, 'CORS rejected origin');
+        callback(new Error('CORS not allowed for this origin'));
+      },
+      credentials: true,
+    }));
+
+    // 5. Body parsing with size limits
+    this.app.use(express.json({ limit: '10mb' }));
+
+    // 6. Serve static files from the public directory relative to this module
     // __dirname in CommonJS after compilation points to dist/services/
     // So we need to go up two levels to reach the project root, then into public/
     const publicPath = join(__dirname, '..', '..', 'public');
     this.app.use(express.static(publicPath));
+
+    logger.info('Security middleware initialized: localhost-only, helmet, rate-limiting, CORS restricted');
   }
 
   private setupRoutes(): void {
@@ -213,8 +396,8 @@ export class WebServer {
       }
     });
 
-    // API: Clear history
-    this.app.delete('/api/history', (req: Request, res: Response) => {
+    // API: Clear history (destructive - stricter rate limit)
+    this.app.delete('/api/history', destructiveLimiter, (req: Request, res: Response) => {
       try {
         this.historyManager.clearHistory();
 
@@ -231,14 +414,10 @@ export class WebServer {
       }
     });
 
-    // API: Execute command
-    this.app.post('/api/execute', async (req: Request, res: Response) => {
+    // API: Execute command (stricter rate limit + validation)
+    this.app.post('/api/execute', executeLimiter, validateBody(executeCommandWebSchema), async (req: Request, res: Response) => {
       try {
-        const { command, cwd, stdin, timeout, background = true, title } = req.body;
-
-        if (!command) {
-          return res.status(400).json({ success: false, error: 'Command is required' });
-        }
+        const { command, cwd, stdin, timeout, background, title } = req.body;
 
         const commandTitle = title || command;
 
@@ -349,14 +528,10 @@ export class WebServer {
       }
     });
 
-    // API: Terminate/kill a running command
-    this.app.post('/api/terminate/:processId', (req: Request, res: Response) => {
+    // API: Terminate/kill a running command (destructive - stricter rate limit + validation)
+    this.app.post('/api/terminate/:processId', destructiveLimiter, validateParams(processIdParamSchema), (req: Request, res: Response) => {
       try {
         const processId = parseInt(req.params.processId);
-
-        if (isNaN(processId)) {
-          return res.status(400).json({ success: false, error: 'Invalid process ID' });
-        }
 
         logger.info({ processId }, 'Terminating command via web API');
 
@@ -579,6 +754,19 @@ export class WebServer {
         res.status(500).json({ success: false, error: 'Failed to process notification' });
       }
     });
+
+    // ========================================================================
+    // GLOBAL ERROR HANDLER (must be last middleware)
+    // ========================================================================
+    this.app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
+      logger.error({ err, path: req.path, method: req.method }, 'Unhandled error');
+
+      // Don't leak error details - return generic message
+      res.status(500).json({
+        success: false,
+        error: 'Internal server error',
+      });
+    });
   }
 
   /**
@@ -610,6 +798,7 @@ export class WebServer {
 
   /**
    * Check if a port is available
+   * SECURITY: Only bind to localhost (127.0.0.1)
    */
   private isPortAvailable(port: number): Promise<boolean> {
     return new Promise((resolve) => {
@@ -621,12 +810,13 @@ export class WebServer {
         server.close();
         resolve(true);
       });
-      server.listen(port, '0.0.0.0');
+      server.listen(port, '127.0.0.1');
     });
   }
 
   /**
    * Start the web server with automatic port detection
+   * SECURITY: Server binds to 127.0.0.1 only (localhost)
    */
   public async start(): Promise<void> {
     // Try to find an available port starting from the configured port
@@ -641,9 +831,10 @@ export class WebServer {
     }
 
     return new Promise((resolve) => {
-      this.server = this.app.listen(this.port, () => {
-        logger.info({ port: this.port }, 'Web UI started');
-        console.log(`\n🌐 Web UI available at: http://localhost:${this.port}\n`);
+      // SECURITY: Bind to localhost only - do not expose to network
+      this.server = this.app.listen(this.port, '127.0.0.1', () => {
+        logger.info({ port: this.port, host: '127.0.0.1' }, 'Web UI started (localhost only)');
+        console.log(`\n🌐 Web UI available at: http://localhost:${this.port} (localhost only)\n`);
 
         // Note: Port file is now written by InstanceDetector for singleton pattern support
         resolve();
