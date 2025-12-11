@@ -5,6 +5,9 @@ on:
     tags:
       - 'vscode-v*'  # Trigger on tags like vscode-v1.5.3
 
+permissions:
+  contents: write
+
 jobs:
   build-and-release:
     runs-on: ubuntu-latest
