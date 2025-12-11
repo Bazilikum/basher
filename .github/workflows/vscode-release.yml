@@ -1,0 +1,57 @@
+name: VS Code Extension Release
+
+on:
+  push:
+    tags:
+      - 'vscode-v*'  # Trigger on tags like vscode-v1.5.3
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: vscode-extension/package-lock.json
+
+      - name: Install dependencies
+        working-directory: vscode-extension
+        run: npm ci
+
+      - name: Compile TypeScript
+        working-directory: vscode-extension
+        run: npm run compile
+
+      - name: Package VSIX
+        working-directory: vscode-extension
+        run: npm run package
+
+      - name: Get extension version
+        id: version
+        working-directory: vscode-extension
+        run: echo "version=$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: vscode-extension/basher-vscode-${{ steps.version.outputs.version }}.vsix
+          generate_release_notes: true
+          draft: false
+          prerelease: true
+          name: VS Code Extension v${{ steps.version.outputs.version }} (Beta)
+          body: |
+            ## Basher VS Code Extension v${{ steps.version.outputs.version }}
+
+            ### Installation
+            1. Download the `.vsix` file below
+            2. In VS Code: `Cmd+Shift+P` → "Extensions: Install from VSIX..."
+            3. Select the downloaded file
+
+            ### What's New
+            See the [CHANGELOG](https://github.com/Bazilikum/basher/blob/main/CHANGELOG.md) for details.
