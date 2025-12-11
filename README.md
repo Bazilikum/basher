@@ -30,6 +30,8 @@ MCP server for executing shell commands with enhanced logging, history tracking,
 - **Failure Analysis** (v1.8.0): Automatic error categorization with actionable suggestions
 - **Auto-Retry** (v1.8.0): Retry failed commands with configurable backoff strategies
 - **Output Diff** (v1.8.0): Auto-compare output with previous runs of the same command
+- **Command Whitelisting** (v1.10.0): Security defense-in-depth requiring explicit approval for command bases
+- **Security Hardening** (v1.9.0): Localhost-only binding, rate limiting, CORS restrictions, Helmet headers
 
 ## Installation
 
@@ -1426,6 +1428,217 @@ List all command sessions.
 }
 ```
 
+### 25. whitelist_command (v1.10.0)
+
+Add a command to the whitelist. **IMPORTANT**: AI must always ask for user permission before calling this tool.
+
+**Parameters:**
+- `command_base` (string, required): The base command to whitelist (e.g., "rm", "kubectl")
+- `description` (string, optional): Description of the command
+
+**Example:**
+```typescript
+{
+  "command_base": "kubectl",
+  "description": "Kubernetes command-line tool"
+}
+```
+
+**Returns:**
+```json
+{
+  "success": true,
+  "message": "Command 'kubectl' has been whitelisted. You can now execute commands starting with 'kubectl'."
+}
+```
+
+### 26. list_whitelisted_commands (v1.10.0)
+
+View all currently whitelisted commands.
+
+**Example:**
+```typescript
+{}
+```
+
+**Returns:**
+```json
+{
+  "enabled": true,
+  "count": 45,
+  "commands": [
+    { "base": "npm", "approvedAt": "2025-01-01T00:00:00.000Z", "description": "Node.js package manager" },
+    { "base": "git", "approvedAt": "2025-01-01T00:00:00.000Z", "description": "Git version control" }
+  ]
+}
+```
+
+### 27. remove_whitelisted_command (v1.10.0)
+
+Remove a command from the whitelist.
+
+**Parameters:**
+- `command_base` (string, required): The base command to remove
+
+**Example:**
+```typescript
+{
+  "command_base": "dangerous-cmd"
+}
+```
+
+**Returns:**
+```json
+{
+  "success": true,
+  "message": "Command 'dangerous-cmd' has been removed from the whitelist"
+}
+```
+
+## Command Whitelisting (v1.10.0)
+
+Basher includes a command whitelisting system that provides defense-in-depth security by requiring explicit approval for command bases before they can be executed.
+
+### How It Works
+
+1. **Command Base Extraction**: When a command is executed, Basher extracts the base command (e.g., `npm install express` → `npm`)
+2. **Whitelist Check**: The command base is checked against the whitelist
+3. **Blocked Commands**: If not whitelisted, the command is blocked with instructions for the AI to request user approval
+4. **Approval Flow**: AI must ask the user for permission, then use `whitelist_command` tool to add it
+
+### Default Whitelisted Commands
+
+Basher comes with common development commands pre-whitelisted:
+
+| Category | Commands |
+|----------|----------|
+| **Package Managers** | npm, npx, yarn, pnpm, bun |
+| **Version Control** | git, gh |
+| **Runtimes** | node, python, python3, pip, pip3 |
+| **CLI Tools** | ls, cat, echo, pwd, cd, mkdir, cp, mv, head, tail, grep, find, which, wc, sort, uniq, diff, curl, wget |
+| **Build Tools** | make, cargo, go, tsc, tsx, esbuild, webpack, vite, rollup |
+| **Testing** | jest, vitest, pytest, mocha |
+| **Linting** | eslint, prettier, biome |
+| **Containers** | docker |
+
+### Whitelist Tools
+
+#### whitelist_command
+
+Add a command to the whitelist. **IMPORTANT**: AI must always ask for user permission before calling this tool.
+
+**Parameters:**
+- `command_base` (string, required): The base command to whitelist (e.g., "rm", "kubectl")
+- `description` (string, optional): Description of the command
+
+**Example:**
+```typescript
+{
+  "command_base": "kubectl",
+  "description": "Kubernetes command-line tool"
+}
+```
+
+**Returns:**
+```json
+{
+  "success": true,
+  "message": "Command 'kubectl' has been whitelisted. You can now execute commands starting with 'kubectl'."
+}
+```
+
+#### list_whitelisted_commands
+
+View all currently whitelisted commands.
+
+**Example:**
+```typescript
+{}
+```
+
+**Returns:**
+```json
+{
+  "enabled": true,
+  "count": 45,
+  "commands": [
+    { "base": "npm", "approvedAt": "2025-01-01T00:00:00.000Z", "description": "Node.js package manager" },
+    { "base": "git", "approvedAt": "2025-01-01T00:00:00.000Z", "description": "Git version control" }
+  ]
+}
+```
+
+#### remove_whitelisted_command
+
+Remove a command from the whitelist.
+
+**Parameters:**
+- `command_base` (string, required): The base command to remove
+
+**Example:**
+```typescript
+{
+  "command_base": "dangerous-cmd"
+}
+```
+
+### Whitelist Configuration
+
+The whitelist is stored in `.basher/whitelist.json`:
+
+```json
+{
+  "enabled": true,
+  "commands": {
+    "npm": { "approvedAt": "2025-01-01T00:00:00.000Z", "description": "Node.js package manager" },
+    "git": { "approvedAt": "2025-01-01T00:00:00.000Z", "description": "Git version control" }
+  }
+}
+```
+
+**To disable whitelisting** (not recommended), set `enabled: false` in the file.
+
+### Blocked Command Response
+
+When a command is blocked, the response includes:
+
+```json
+{
+  "status": "blocked",
+  "error": "COMMAND_NOT_WHITELISTED",
+  "commandBase": "rm",
+  "instructions": "Ask user for permission, then use whitelist_command tool"
+}
+```
+
+## Security
+
+Basher is designed as a **localhost-only** development tool with multiple security layers. See [SECURITY.md](SECURITY.md) for the complete security model.
+
+### Security Controls Summary
+
+| Control | Description |
+|---------|-------------|
+| **Localhost Only** | Server binds to 127.0.0.1, rejects non-localhost requests |
+| **Command Whitelisting** | Commands must be whitelisted before execution |
+| **Rate Limiting** | 200 req/min general, 60 req/min execute, 10 req/min destructive |
+| **CORS Restrictions** | Only localhost origins allowed |
+| **Security Headers** | Helmet middleware with CSP, X-Frame-Options, etc. |
+| **Input Validation** | Zod schemas validate all inputs |
+| **Body Size Limit** | 10MB max request body |
+
+### Deployment Guidelines
+
+**✅ Acceptable:**
+- Local development machine
+- Single-user environment
+- Behind firewall/NAT
+
+**❌ NOT Acceptable:**
+- Public internet exposure
+- Multi-user systems without isolation
+- Cloud deployments without network restrictions
+
 ## Token Efficiency Features
 
 Basher is designed from the ground up for **token efficiency** when used with AI agents. Large command outputs can quickly consume your context window - these features help minimize token usage while preserving the information you need.
@@ -1622,6 +1835,7 @@ basher/
 │   │   ├── instance-notifier.ts       # Multi-instance HTTP notifications
 │   │   ├── logger.config.ts           # Pino logger configuration
 │   │   ├── web-server.ts              # Web UI server with SSE
+│   │   ├── whitelist-manager.ts       # Command whitelisting security
 │   │   ├── output-parser.ts           # Structured output parsing (jest, pytest, etc.)
 │   │   ├── command-templates.ts       # Reusable command templates
 │   │   ├── command-sessions.ts        # Command session management
