@@ -33,6 +33,16 @@ MCP server for executing shell commands with enhanced logging, history tracking,
 - **Command Whitelisting** (v1.10.0): Security defense-in-depth requiring explicit approval for command bases
 - **Security Hardening** (v1.9.0): Localhost-only binding, rate limiting, CORS restrictions, Helmet headers
 
+## Platform Support
+
+| Platform | Status | Notes |
+|----------|--------|-------|
+| **macOS** | ✅ Fully supported | Primary development platform |
+| **Linux** | ✅ Fully supported | Tested on Ubuntu |
+| **Windows** | ⚠️ Experimental | Commands execute via `cmd.exe`. Default whitelisted commands (`ls`, `cat`, `grep`, etc.) are Unix-specific and won't work. You'll need to whitelist Windows equivalents (`dir`, `type`, `findstr`, etc.) |
+
+> **Note**: Basher uses Node.js `child_process.spawn` with `shell: true`, which automatically uses the system's default shell (`/bin/sh` on Unix, `cmd.exe` on Windows).
+
 ## Installation
 
 ### Quick Install (Recommended)
