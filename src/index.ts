@@ -2553,6 +2553,18 @@ async function main() {
   try {
     const webPort = parseInt(process.env.WEB_PORT || '3000');
 
+    // IMPORTANT: Start MCP server on stdio FIRST, before any async operations
+    // This ensures the MCP client can connect immediately and receive tool list
+    // The web server and instance detection can happen after
+    const transport = new StdioServerTransport();
+    await server.connect(transport);
+
+    logger.info('MCP transport connected, now initializing web server...');
+
+    // Yield to event loop to allow MCP to process any pending messages
+    // This prevents Claude Code from timing out while we do further initialization
+    await new Promise(resolve => setImmediate(resolve));
+
     // Check for existing Basher instance (singleton pattern)
     existingInstanceInfo = await instanceDetector.checkExistingInstance();
 
@@ -2572,7 +2584,7 @@ async function main() {
         },
         'Existing Basher instance detected, running in client mode (shared web server)'
       );
-      console.log(`\n🔗 Connected to existing Basher instance at: http://localhost:${existingInstanceInfo.port}\n`);
+      console.error(`🔗 Connected to existing Basher instance at: http://localhost:${existingInstanceInfo.port}`);
     } else {
       // No existing instance - become the primary instance with web server
       isPrimaryInstance = true;
@@ -2593,10 +2605,6 @@ async function main() {
       );
     }
 
-    // Start MCP server on stdio (always starts, regardless of primary/client mode)
-    const transport = new StdioServerTransport();
-    await server.connect(transport);
-
     logger.info(
       {
         name: packageJson.name,
@@ -2608,8 +2616,8 @@ async function main() {
     );
 
     // Graceful shutdown
-    const shutdown = async () => {
-      logger.info({ isPrimaryInstance }, 'Shutting down gracefully...');
+    const shutdown = async (signal?: string) => {
+      logger.info({ isPrimaryInstance, signal, uptime: process.uptime() }, 'Shutting down gracefully...');
 
       // Save or cleanup process state before exit
       processManager.cleanup();
@@ -2627,8 +2635,15 @@ async function main() {
       process.exit(0);
     };
 
-    process.on('SIGINT', shutdown);
-    process.on('SIGTERM', shutdown);
+    process.on('SIGINT', () => shutdown('SIGINT'));
+    process.on('SIGTERM', () => shutdown('SIGTERM'));
+    process.on('SIGHUP', () => shutdown('SIGHUP'));
+
+    // Also catch stdin close (which MCP uses to signal shutdown)
+    process.stdin.on('close', () => {
+      logger.info({ uptime: process.uptime() }, 'stdin closed, shutting down');
+      shutdown('stdin-close');
+    });
   } catch (error) {
     logger.fatal({
       error,

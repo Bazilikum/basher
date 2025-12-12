@@ -11,7 +11,7 @@ export interface ExistingInstance {
 export interface InstanceDetectorOptions {
     /** Base directory for .basher folder */
     basherDir: string;
-    /** Timeout for health check in ms (default: 2000) */
+    /** Timeout for health check in ms (default: 500) - kept short to avoid reconnect delays */
     healthCheckTimeout?: number;
 }
 export declare class InstanceDetector {
@@ -20,6 +20,10 @@ export declare class InstanceDetector {
     private portFile;
     private pidFile;
     constructor(options: InstanceDetectorOptions);
+    /**
+     * Check if a process with given PID is still running
+     */
+    private isProcessRunning;
     /**
      * Check if an existing Basher instance is running and healthy
      * Returns the instance info if found, null otherwise

@@ -10,9 +10,23 @@ import logger from './logger.config.js';
 export class InstanceDetector {
     constructor(options) {
         this.basherDir = options.basherDir;
-        this.healthCheckTimeout = options.healthCheckTimeout ?? 2000;
+        // Reduced from 2000ms to 500ms - faster detection of dead instances on reconnect
+        this.healthCheckTimeout = options.healthCheckTimeout ?? 500;
         this.portFile = join(this.basherDir, 'port');
         this.pidFile = join(this.basherDir, 'pid');
+    }
+    /**
+     * Check if a process with given PID is still running
+     */
+    isProcessRunning(pid) {
+        try {
+            // Sending signal 0 doesn't actually send a signal but checks if process exists
+            process.kill(pid, 0);
+            return true;
+        }
+        catch {
+            return false;
+        }
     }
     /**
      * Check if an existing Basher instance is running and healthy
@@ -32,19 +46,25 @@ export class InstanceDetector {
                 this.cleanup();
                 return null;
             }
-            // Try health check
-            const isHealthy = await this.healthCheck(port);
-            if (isHealthy) {
-                // Read PID if available
-                let pid;
-                if (existsSync(this.pidFile)) {
-                    try {
-                        pid = parseInt(readFileSync(this.pidFile, 'utf-8').trim(), 10);
-                    }
-                    catch {
-                        // Ignore PID read errors
+            // FAST PATH: Check if PID is still running before doing network health check
+            // This avoids the timeout delay when the old process was killed (reconnect scenario)
+            let pid;
+            if (existsSync(this.pidFile)) {
+                try {
+                    pid = parseInt(readFileSync(this.pidFile, 'utf-8').trim(), 10);
+                    if (!isNaN(pid) && !this.isProcessRunning(pid)) {
+                        logger.info({ port, pid }, 'PID file exists but process is dead, cleaning up stale files');
+                        this.cleanup();
+                        return null;
                     }
                 }
+                catch {
+                    // Ignore PID read errors, fall through to health check
+                }
+            }
+            // Try health check (only if PID check passed or was inconclusive)
+            const isHealthy = await this.healthCheck(port);
+            if (isHealthy) {
                 logger.info({ port, pid }, 'Found existing healthy Basher instance');
                 return { port, pid };
             }

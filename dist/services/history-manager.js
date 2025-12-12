@@ -27,6 +27,9 @@ export class HistoryManager {
             // Directory already exists, ignore
         }
         this.db = new Database(dbPath);
+        // Set busy timeout to handle concurrent access during reconnects
+        // Keep it short (1s) to avoid Claude Code timeout issues
+        this.db.pragma('busy_timeout = 1000');
         this.initDatabase();
         this.advanced = new AdvancedQueries(this.db);
         // Run cleanup on initialization

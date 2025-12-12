@@ -164,6 +164,7 @@ export class WebServer {
                 directives: {
                     defaultSrc: ["'self'"],
                     scriptSrc: ["'self'", "'unsafe-inline'"], // Needed for inline scripts in index.html
+                    scriptSrcAttr: ["'unsafe-inline'"], // Needed for onclick handlers
                     styleSrc: ["'self'", "'unsafe-inline'"], // Needed for inline styles
                     imgSrc: ["'self'", "data:"],
                     connectSrc: ["'self'"],

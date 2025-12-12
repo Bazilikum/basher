@@ -5,6 +5,22 @@ All notable changes to Basher will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.11.0] - 2025-12-12
+
+### Fixed
+- **MCP Reconnect Reliability**: Fixed issue where first reconnect attempt would fail
+  - MCP transport now connects before web server initialization
+  - Added event loop yield after MCP connect to process pending messages
+  - Faster logger initialization (removed pino-pretty worker threads)
+  - Improved instance detection with PID check before network health check
+  - Reduced health check timeout from 2s to 500ms
+  - Added SQLite busy timeout for database lock handling
+
+### Added
+- **Resizable Command Panel**: Web UI command list panel is now resizable via drag handle
+- **Better Output Sizing**: Output panel now uses viewport-relative height for better fit
+- Shutdown signal logging for debugging (tracks SIGINT, SIGTERM, SIGHUP, stdin-close)
+
 ## [1.10.0] - 2025-01-17
 
 ### Added

@@ -855,12 +855,29 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 const callbacks = {
                     onStart: (processId, cmd, cmdTitle, cmdCwd) => {
                         capturedProcessId = processId;
+                        // Broadcast to web UI
+                        if (webServer) {
+                            webServer.broadcast('command_started', {
+                                processId,
+                                command: cmd,
+                                title: cmdTitle,
+                                cwd: cmdCwd,
+                            });
+                        }
                         if (instanceNotifier) {
                             instanceNotifier.notifyCommandStart(processId, cmd, cmdTitle, cmdCwd);
                         }
                     },
                     onStdout: (processId, data) => {
                         accumulatedStdout += data;
+                        // Broadcast output to web UI
+                        if (webServer) {
+                            webServer.broadcast('command_output', {
+                                processId,
+                                stream: 'stdout',
+                                data,
+                            });
+                        }
                         if (instanceNotifier) {
                             instanceNotifier.notifyCommandOutput(processId, 'stdout', data);
                         }
@@ -876,6 +893,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                     },
                     onStderr: (processId, data) => {
                         accumulatedStderr += data;
+                        // Broadcast output to web UI
+                        if (webServer) {
+                            webServer.broadcast('command_output', {
+                                processId,
+                                stream: 'stderr',
+                                data,
+                            });
+                        }
                         if (instanceNotifier) {
                             instanceNotifier.notifyCommandOutput(processId, 'stderr', data);
                         }
@@ -998,16 +1023,41 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 const callbacks = {
                     onStart: (processId, cmd, cmdTitle, cmdCwd) => {
                         capturedProcessId = processId;
+                        // Broadcast to web UI
+                        if (webServer) {
+                            webServer.broadcast('command_started', {
+                                processId,
+                                command: cmd,
+                                title: cmdTitle,
+                                cwd: cmdCwd,
+                            });
+                        }
                         if (instanceNotifier) {
                             instanceNotifier.notifyCommandStart(processId, cmd, cmdTitle, cmdCwd);
                         }
                     },
                     onStdout: (processId, data) => {
+                        // Broadcast output to web UI
+                        if (webServer) {
+                            webServer.broadcast('command_output', {
+                                processId,
+                                stream: 'stdout',
+                                data,
+                            });
+                        }
                         if (instanceNotifier) {
                             instanceNotifier.notifyCommandOutput(processId, 'stdout', data);
                         }
                     },
                     onStderr: (processId, data) => {
+                        // Broadcast output to web UI
+                        if (webServer) {
+                            webServer.broadcast('command_output', {
+                                processId,
+                                stream: 'stderr',
+                                data,
+                            });
+                        }
                         if (instanceNotifier) {
                             instanceNotifier.notifyCommandOutput(processId, 'stderr', data);
                         }
@@ -1046,16 +1096,41 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             const callbacks = {
                 onStart: (processId, cmd, cmdTitle, cmdCwd) => {
                     capturedProcessId = processId;
+                    // Broadcast to web UI
+                    if (webServer) {
+                        webServer.broadcast('command_started', {
+                            processId,
+                            command: cmd,
+                            title: cmdTitle,
+                            cwd: cmdCwd,
+                        });
+                    }
                     if (instanceNotifier) {
                         instanceNotifier.notifyCommandStart(processId, cmd, cmdTitle, cmdCwd);
                     }
                 },
                 onStdout: (processId, data) => {
+                    // Broadcast output to web UI
+                    if (webServer) {
+                        webServer.broadcast('command_output', {
+                            processId,
+                            stream: 'stdout',
+                            data,
+                        });
+                    }
                     if (instanceNotifier) {
                         instanceNotifier.notifyCommandOutput(processId, 'stdout', data);
                     }
                 },
                 onStderr: (processId, data) => {
+                    // Broadcast output to web UI
+                    if (webServer) {
+                        webServer.broadcast('command_output', {
+                            processId,
+                            stream: 'stderr',
+                            data,
+                        });
+                    }
                     if (instanceNotifier) {
                         instanceNotifier.notifyCommandOutput(processId, 'stderr', data);
                     }
@@ -1813,16 +1888,41 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             // This is a simplified execution - in production you'd call the full handler
             const callbacks = {
                 onStart: (processId, cmd, cmdTitle, cmdCwd) => {
+                    // Broadcast to web UI
+                    if (webServer) {
+                        webServer.broadcast('command_started', {
+                            processId,
+                            command: cmd,
+                            title: cmdTitle,
+                            cwd: cmdCwd,
+                        });
+                    }
                     if (instanceNotifier) {
                         instanceNotifier.notifyCommandStart(processId, cmd, cmdTitle, cmdCwd);
                     }
                 },
                 onStdout: (processId, data) => {
+                    // Broadcast output to web UI
+                    if (webServer) {
+                        webServer.broadcast('command_output', {
+                            processId,
+                            stream: 'stdout',
+                            data,
+                        });
+                    }
                     if (instanceNotifier) {
                         instanceNotifier.notifyCommandOutput(processId, 'stdout', data);
                     }
                 },
                 onStderr: (processId, data) => {
+                    // Broadcast output to web UI
+                    if (webServer) {
+                        webServer.broadcast('command_output', {
+                            processId,
+                            stream: 'stderr',
+                            data,
+                        });
+                    }
                     if (instanceNotifier) {
                         instanceNotifier.notifyCommandOutput(processId, 'stderr', data);
                     }
@@ -2102,6 +2202,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 async function main() {
     try {
         const webPort = parseInt(process.env.WEB_PORT || '3000');
+        // IMPORTANT: Start MCP server on stdio FIRST, before any async operations
+        // This ensures the MCP client can connect immediately and receive tool list
+        // The web server and instance detection can happen after
+        const transport = new StdioServerTransport();
+        await server.connect(transport);
+        logger.info('MCP transport connected, now initializing web server...');
+        // Yield to event loop to allow MCP to process any pending messages
+        // This prevents Claude Code from timing out while we do further initialization
+        await new Promise(resolve => setImmediate(resolve));
         // Check for existing Basher instance (singleton pattern)
         existingInstanceInfo = await instanceDetector.checkExistingInstance();
         if (existingInstanceInfo) {
@@ -2115,7 +2224,7 @@ async function main() {
                 existingPort: existingInstanceInfo.port,
                 existingPid: existingInstanceInfo.pid,
             }, 'Existing Basher instance detected, running in client mode (shared web server)');
-            console.log(`\n🔗 Connected to existing Basher instance at: http://localhost:${existingInstanceInfo.port}\n`);
+            console.error(`🔗 Connected to existing Basher instance at: http://localhost:${existingInstanceInfo.port}`);
         }
         else {
             // No existing instance - become the primary instance with web server
@@ -2131,9 +2240,6 @@ async function main() {
                 isPrimary: true,
             }, 'Basher MCP server started as primary instance');
         }
-        // Start MCP server on stdio (always starts, regardless of primary/client mode)
-        const transport = new StdioServerTransport();
-        await server.connect(transport);
         logger.info({
             name: packageJson.name,
             version: packageJson.version,
@@ -2141,8 +2247,8 @@ async function main() {
             webPort: isPrimaryInstance ? webServer?.getPort() : existingInstanceInfo?.port,
         }, 'Basher MCP server started successfully');
         // Graceful shutdown
-        const shutdown = async () => {
-            logger.info({ isPrimaryInstance }, 'Shutting down gracefully...');
+        const shutdown = async (signal) => {
+            logger.info({ isPrimaryInstance, signal, uptime: process.uptime() }, 'Shutting down gracefully...');
             // Save or cleanup process state before exit
             processManager.cleanup();
             if (isPrimaryInstance) {
@@ -2156,8 +2262,14 @@ async function main() {
             historyManager.close();
             process.exit(0);
         };
-        process.on('SIGINT', shutdown);
-        process.on('SIGTERM', shutdown);
+        process.on('SIGINT', () => shutdown('SIGINT'));
+        process.on('SIGTERM', () => shutdown('SIGTERM'));
+        process.on('SIGHUP', () => shutdown('SIGHUP'));
+        // Also catch stdin close (which MCP uses to signal shutdown)
+        process.stdin.on('close', () => {
+            logger.info({ uptime: process.uptime() }, 'stdin closed, shutting down');
+            shutdown('stdin-close');
+        });
     }
     catch (error) {
         logger.fatal({
