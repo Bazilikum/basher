@@ -224,6 +224,39 @@
       animation: pulse 1.5s infinite;
     }
 
+    .btn-terminate {
+      padding: 4px 8px;
+      background: #da3633;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 11px;
+      font-weight: 600;
+      transition: all 0.2s;
+    }
+
+    .btn-terminate:hover {
+      background: #f85149;
+      transform: scale(1.05);
+    }
+
+    .btn-terminate-output {
+      padding: 4px 10px;
+      background: #da3633;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 11px;
+      font-weight: 600;
+      transition: all 0.2s;
+    }
+
+    .btn-terminate-output:hover {
+      background: #f85149;
+    }
+
     .command-header {
       display: flex;
       justify-content: space-between;
@@ -734,17 +767,28 @@
       }
     }
 
-    async function enableNotifications() {
-      if ('Notification' in window) {
-        const permission = await Notification.requestPermission();
+    function enableNotifications() {
+      if (!('Notification' in window)) {
+        alert('This browser does not support notifications');
+        document.getElementById('notification-prompt').classList.remove('show');
+        return;
+      }
+
+      Notification.requestPermission().then(permission => {
         document.getElementById('notification-prompt').classList.remove('show');
         if (permission === 'granted') {
           new Notification('Basher', {
             body: 'Notifications enabled! You\'ll be alerted when commands complete.',
             icon: '/favicon.ico'
           });
+        } else if (permission === 'denied') {
+          console.log('Notification permission denied');
         }
-      }
+      }).catch(err => {
+        console.error('Notification permission error:', err);
+        alert('Failed to request notification permission: ' + err.message);
+        document.getElementById('notification-prompt').classList.remove('show');
+      });
     }
 
     function showNotification(title, body, type = 'info') {
