@@ -941,12 +941,29 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const callbacks: CommandExecutionCallbacks = {
           onStart: (processId, cmd, cmdTitle, cmdCwd) => {
             capturedProcessId = processId;
+            // Broadcast to web UI
+            if (webServer) {
+              webServer.broadcast('command_started', {
+                processId,
+                command: cmd,
+                title: cmdTitle,
+                cwd: cmdCwd,
+              });
+            }
             if (instanceNotifier) {
               instanceNotifier.notifyCommandStart(processId, cmd, cmdTitle, cmdCwd);
             }
           },
           onStdout: (processId, data) => {
             accumulatedStdout += data;
+            // Broadcast output to web UI
+            if (webServer) {
+              webServer.broadcast('command_output', {
+                processId,
+                stream: 'stdout',
+                data,
+              });
+            }
             if (instanceNotifier) {
               instanceNotifier.notifyCommandOutput(processId, 'stdout', data);
             }
@@ -962,6 +979,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           },
           onStderr: (processId, data) => {
             accumulatedStderr += data;
+            // Broadcast output to web UI
+            if (webServer) {
+              webServer.broadcast('command_output', {
+                processId,
+                stream: 'stderr',
+                data,
+              });
+            }
             if (instanceNotifier) {
               instanceNotifier.notifyCommandOutput(processId, 'stderr', data);
             }
@@ -1087,16 +1112,41 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const callbacks: CommandExecutionCallbacks = {
           onStart: (processId, cmd, cmdTitle, cmdCwd) => {
             capturedProcessId = processId;
+            // Broadcast to web UI
+            if (webServer) {
+              webServer.broadcast('command_started', {
+                processId,
+                command: cmd,
+                title: cmdTitle,
+                cwd: cmdCwd,
+              });
+            }
             if (instanceNotifier) {
               instanceNotifier.notifyCommandStart(processId, cmd, cmdTitle, cmdCwd);
             }
           },
           onStdout: (processId, data) => {
+            // Broadcast output to web UI
+            if (webServer) {
+              webServer.broadcast('command_output', {
+                processId,
+                stream: 'stdout',
+                data,
+              });
+            }
             if (instanceNotifier) {
               instanceNotifier.notifyCommandOutput(processId, 'stdout', data);
             }
           },
           onStderr: (processId, data) => {
+            // Broadcast output to web UI
+            if (webServer) {
+              webServer.broadcast('command_output', {
+                processId,
+                stream: 'stderr',
+                data,
+              });
+            }
             if (instanceNotifier) {
               instanceNotifier.notifyCommandOutput(processId, 'stderr', data);
             }
@@ -1139,16 +1189,41 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const callbacks: CommandExecutionCallbacks = {
         onStart: (processId, cmd, cmdTitle, cmdCwd) => {
           capturedProcessId = processId;
+          // Broadcast to web UI
+          if (webServer) {
+            webServer.broadcast('command_started', {
+              processId,
+              command: cmd,
+              title: cmdTitle,
+              cwd: cmdCwd,
+            });
+          }
           if (instanceNotifier) {
             instanceNotifier.notifyCommandStart(processId, cmd, cmdTitle, cmdCwd);
           }
         },
         onStdout: (processId, data) => {
+          // Broadcast output to web UI
+          if (webServer) {
+            webServer.broadcast('command_output', {
+              processId,
+              stream: 'stdout',
+              data,
+            });
+          }
           if (instanceNotifier) {
             instanceNotifier.notifyCommandOutput(processId, 'stdout', data);
           }
         },
         onStderr: (processId, data) => {
+          // Broadcast output to web UI
+          if (webServer) {
+            webServer.broadcast('command_output', {
+              processId,
+              stream: 'stderr',
+              data,
+            });
+          }
           if (instanceNotifier) {
             instanceNotifier.notifyCommandOutput(processId, 'stderr', data);
           }
@@ -2101,16 +2176,41 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       // This is a simplified execution - in production you'd call the full handler
       const callbacks: CommandExecutionCallbacks = {
         onStart: (processId, cmd, cmdTitle, cmdCwd) => {
+          // Broadcast to web UI
+          if (webServer) {
+            webServer.broadcast('command_started', {
+              processId,
+              command: cmd,
+              title: cmdTitle,
+              cwd: cmdCwd,
+            });
+          }
           if (instanceNotifier) {
             instanceNotifier.notifyCommandStart(processId, cmd, cmdTitle, cmdCwd);
           }
         },
         onStdout: (processId, data) => {
+          // Broadcast output to web UI
+          if (webServer) {
+            webServer.broadcast('command_output', {
+              processId,
+              stream: 'stdout',
+              data,
+            });
+          }
           if (instanceNotifier) {
             instanceNotifier.notifyCommandOutput(processId, 'stdout', data);
           }
         },
         onStderr: (processId, data) => {
+          // Broadcast output to web UI
+          if (webServer) {
+            webServer.broadcast('command_output', {
+              processId,
+              stream: 'stderr',
+              data,
+            });
+          }
           if (instanceNotifier) {
             instanceNotifier.notifyCommandOutput(processId, 'stderr', data);
           }
