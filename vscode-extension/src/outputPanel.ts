@@ -11,15 +11,19 @@ interface CommandHistoryItem {
   duration: number;
   stdout: string;
   stderr: string;
+  processId?: number;
 }
 
 export class CommandOutputPanel {
   private static readonly viewType = 'commandNConquer.outputPanel';
   private static panels = new Map<number, CommandOutputPanel>();
+  // Track panels by processId separately so we can find them during transition
+  private static panelsByProcessId = new Map<number, CommandOutputPanel>();
   private static extensionVersion: string = '';
 
   private readonly _panel: vscode.WebviewPanel;
-  private readonly _commandId: number;
+  private _commandId: number; // Can change when running command gets database ID
+  private _originalProcessId: number | undefined; // Track original processId for running commands
   private _commandData: CommandHistoryItem;
   private _disposables: vscode.Disposable[] = [];
   private _isRunning: boolean = false;
@@ -49,10 +53,25 @@ export class CommandOutputPanel {
       ? vscode.window.activeTextEditor.viewColumn
       : undefined;
 
-    // If we already have a panel for this command, show it
+    // Check if we already have a panel for this command
+    // First check by commandId (database ID for completed, processId for running)
     if (CommandOutputPanel.panels.has(commandId)) {
       const existingPanel = CommandOutputPanel.panels.get(commandId)!;
-      // Reveal with preserveFocus: false to ensure the panel gets focus
+      existingPanel._panel.reveal(column, false);
+      return existingPanel;
+    }
+
+    // For running commands, also check if panel was created with processId
+    if (isRunning && CommandOutputPanel.panelsByProcessId.has(commandId)) {
+      const existingPanel = CommandOutputPanel.panelsByProcessId.get(commandId)!;
+      existingPanel._panel.reveal(column, false);
+      return existingPanel;
+    }
+
+    // For completed commands, check if there's a panel that was created for this command
+    // when it was running (by processId)
+    if (!isRunning && commandData.processId && CommandOutputPanel.panelsByProcessId.has(commandData.processId)) {
+      const existingPanel = CommandOutputPanel.panelsByProcessId.get(commandData.processId)!;
       existingPanel._panel.reveal(column, false);
       return existingPanel;
     }
@@ -60,7 +79,7 @@ export class CommandOutputPanel {
     // Otherwise, create a new panel
     const panel = vscode.window.createWebviewPanel(
       CommandOutputPanel.viewType,
-      `#${commandId} ${commandData.command}`,
+      isRunning ? `P${commandId} ${commandData.command}` : `#${commandId} ${commandData.command}`,
       column || vscode.ViewColumn.One,
       {
         enableScripts: true,
@@ -71,6 +90,12 @@ export class CommandOutputPanel {
 
     const outputPanel = new CommandOutputPanel(panel, extensionUri, commandId, commandData, isRunning);
     CommandOutputPanel.panels.set(commandId, outputPanel);
+
+    // Also track by processId for running commands
+    if (isRunning) {
+      CommandOutputPanel.panelsByProcessId.set(commandId, outputPanel);
+    }
+
     return outputPanel;
   }
 
@@ -85,6 +110,11 @@ export class CommandOutputPanel {
     this._commandId = commandId;
     this._commandData = commandData;
     this._isRunning = isRunning;
+
+    // Track original processId for running commands
+    if (isRunning) {
+      this._originalProcessId = commandId;
+    }
 
     // Set the webview's initial html content
     this._update();
@@ -249,7 +279,8 @@ export class CommandOutputPanel {
       const serverUrl = config.get<string>('serverUrl') || 'http://localhost:3000';
 
       // Fetch completed command from history by process ID
-      const url = new URL(`${serverUrl}/api/command/by-process/${this._commandId}`);
+      const processIdToFetch = this._originalProcessId || this._commandId;
+      const url = new URL(`${serverUrl}/api/command/by-process/${processIdToFetch}`);
 
       await new Promise((resolve, reject) => {
         http.get(url.toString(), (res) => {
@@ -259,9 +290,12 @@ export class CommandOutputPanel {
             try {
               const result = JSON.parse(data);
               if (result.success && result.data) {
+                const oldCommandId = this._commandId;
+                const newDatabaseId = result.data.id;
+
                 // Update command data with final result
                 this._commandData = {
-                  id: result.data.id,
+                  id: newDatabaseId,
                   command: result.data.command,
                   cwd: result.data.cwd,
                   timestamp: result.data.timestamp,
@@ -270,6 +304,13 @@ export class CommandOutputPanel {
                   stdout: result.data.stdout || '',
                   stderr: result.data.stderr || '',
                 };
+
+                // Update the panel map: remove old processId key, add new database ID key
+                if (oldCommandId !== newDatabaseId) {
+                  CommandOutputPanel.panels.delete(oldCommandId);
+                  CommandOutputPanel.panels.set(newDatabaseId, this);
+                  this._commandId = newDatabaseId;
+                }
 
                 // Update panel title with database ID
                 this._panel.title = `#${result.data.id} ${result.data.command}`;
@@ -334,6 +375,11 @@ export class CommandOutputPanel {
   public dispose() {
     this.stopPolling();
     CommandOutputPanel.panels.delete(this._commandId);
+
+    // Also clean up from processId map if this was a running command
+    if (this._originalProcessId !== undefined) {
+      CommandOutputPanel.panelsByProcessId.delete(this._originalProcessId);
+    }
 
     // Clean up our resources
     this._panel.dispose();

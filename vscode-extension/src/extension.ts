@@ -163,7 +163,7 @@ class CommandHistoryProvider implements vscode.TreeDataProvider<CommandTreeItem>
       const db = new SQL.Database(fileBuffer);
 
       const result = db.exec(`
-        SELECT id, command, title, cwd, timestamp, exit_code, duration, stdout, stderr
+        SELECT id, command, title, cwd, timestamp, exit_code, duration, stdout, stderr, process_id
         FROM command_history
         ORDER BY id DESC
         LIMIT ${limit}
@@ -179,6 +179,7 @@ class CommandHistoryProvider implements vscode.TreeDataProvider<CommandTreeItem>
           duration: row[6] as number,
           stdout: (row[7] as string) || '',
           stderr: (row[8] as string) || '',
+          processId: row[9] as number | undefined, // Include process_id for matching
           status: 'completed' as const
         }));
       } else {
@@ -239,12 +240,26 @@ class CommandHistoryProvider implements vscode.TreeDataProvider<CommandTreeItem>
   }
 
   getCommand(id: number): CommandHistoryItem | undefined {
-    // Check running commands first
+    // Check running commands first (by processId)
     const runningCmd = this.runningCommands.find(cmd => cmd.processId === id);
     if (runningCmd) {
       return runningCmd;
     }
-    return this.commands.find(cmd => cmd.id === id);
+
+    // Check completed commands by database id
+    const completedById = this.commands.find(cmd => cmd.id === id);
+    if (completedById) {
+      return completedById;
+    }
+
+    // Also check completed commands by processId (for commands that just finished)
+    // This handles the race condition where command completed but UI hasn't refreshed yet
+    const completedByProcessId = this.commands.find(cmd => cmd.processId === id);
+    if (completedByProcessId) {
+      return completedByProcessId;
+    }
+
+    return undefined;
   }
 
   private fetchJson(url: string): Promise<any> {
@@ -891,11 +906,20 @@ export function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(
     vscode.commands.registerCommand('commandNConquer.openOutput', async (commandId: number, isRunning: boolean = false) => {
-      const command = historyProvider.getCommand(commandId);
+      let command = historyProvider.getCommand(commandId);
+
+      // If command not found, try refreshing the data first (handles race condition)
+      if (!command) {
+        await historyProvider.loadCommands();
+        command = historyProvider.getCommand(commandId);
+      }
+
       if (command) {
         CommandOutputPanel.createOrShow(context.extensionUri, commandId, command, isRunning);
       } else {
-        vscode.window.showErrorMessage(`Command ${commandId} not found`);
+        // Still not found - might be a very recent command, show message and refresh tree
+        vscode.window.showWarningMessage(`Command ${commandId} not found. Refreshing...`);
+        historyProvider.refresh();
       }
     })
   );
