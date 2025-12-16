@@ -48,7 +48,7 @@ export declare class HistoryManager {
      * Returns the most recent command with this process ID
      */
     getCommandByProcessId(processId: number): CommandHistoryEntry | null;
-    getRecentHistory(limit?: number): CommandHistoryEntry[];
+    getRecentHistory(limit?: number, includeRunning?: boolean): CommandHistoryEntry[];
     /**
      * Get command history by exit code
      */

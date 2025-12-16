@@ -245,10 +245,13 @@ export class HistoryManager {
             return null;
         }
     }
-    getRecentHistory(limit = 100) {
+    getRecentHistory(limit = 100, includeRunning = false) {
         try {
+            // By default, only return completed commands to avoid duplicates with /api/running
+            const whereClause = includeRunning ? '' : "WHERE status = 'completed' OR status IS NULL";
             const stmt = this.db.prepare(`
         SELECT * FROM command_history
+        ${whereClause}
         ORDER BY timestamp DESC
         LIMIT ?
       `);
@@ -262,6 +265,7 @@ export class HistoryManager {
                 duration: row.duration,
                 stdout: row.stdout,
                 stderr: row.stderr,
+                status: row.status,
             }));
         }
         catch (error) {

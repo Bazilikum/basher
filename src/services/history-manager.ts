@@ -298,10 +298,13 @@ export class HistoryManager {
     }
   }
 
-  getRecentHistory(limit: number = 100): CommandHistoryEntry[] {
+  getRecentHistory(limit: number = 100, includeRunning: boolean = false): CommandHistoryEntry[] {
     try {
+      // By default, only return completed commands to avoid duplicates with /api/running
+      const whereClause = includeRunning ? '' : "WHERE status = 'completed' OR status IS NULL";
       const stmt = this.db.prepare(`
         SELECT * FROM command_history
+        ${whereClause}
         ORDER BY timestamp DESC
         LIMIT ?
       `);
@@ -317,6 +320,7 @@ export class HistoryManager {
         duration: row.duration,
         stdout: row.stdout,
         stderr: row.stderr,
+        status: row.status,
       }));
     } catch (error) {
       logger.error({ error, limit }, 'Failed to get recent history');
