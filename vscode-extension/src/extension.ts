@@ -43,6 +43,7 @@ class CommandHistoryProvider implements vscode.TreeDataProvider<CommandTreeItem>
   private dbPath: string | null = null;
   private lastError: string | null = null;
   private serverPort: number = 3000;
+  private isLoading: boolean = false; // Prevent concurrent refreshes
 
   constructor(private context: vscode.ExtensionContext) {
     this.findDatabasePath();
@@ -113,18 +114,24 @@ class CommandHistoryProvider implements vscode.TreeDataProvider<CommandTreeItem>
   }
 
   async loadCommands(): Promise<void> {
+    // Prevent concurrent refreshes which cause flickering
+    if (this.isLoading) {
+      console.log('[Basher] Skipping loadCommands - already loading');
+      return;
+    }
+
+    this.isLoading = true;
     try {
       this.lastError = null; // Clear previous errors
 
       // Fetch running commands from web API
       try {
         const url = `http://localhost:${this.serverPort}/api/running`;
-        console.log('[Basher] Fetching running commands from:', url);
         const runningResponse = await this.fetchJson(url);
-        console.log('[Basher] Running commands response:', runningResponse);
         if (runningResponse.success && runningResponse.data) {
-          console.log('[Basher] Found running commands:', runningResponse.data.length);
-          this.runningCommands = runningResponse.data.map((proc: RunningProcess) => ({
+          // Only update if we got valid data - don't clear on empty response
+          // as it might be a transient state
+          const newRunningCommands = runningResponse.data.map((proc: RunningProcess) => ({
             id: proc.id,
             command: proc.title || proc.command,
             cwd: '',
@@ -136,13 +143,16 @@ class CommandHistoryProvider implements vscode.TreeDataProvider<CommandTreeItem>
             processId: proc.id,
             status: 'running' as const
           }));
-        } else {
+          this.runningCommands = newRunningCommands;
+        } else if (runningResponse.success && Array.isArray(runningResponse.data)) {
+          // Explicitly empty array from server - commands finished
           this.runningCommands = [];
         }
+        // If response.success is false, keep previous running commands
       } catch (error) {
-        // Server might not be running
-        console.error('[Basher] Failed to fetch running commands:', error);
-        this.runningCommands = [];
+        // Server might not be running or network error
+        // Keep previous running commands to prevent flickering
+        console.error('[Basher] Failed to fetch running commands (keeping previous):', error);
       }
 
       if (!this.dbPath || !fs.existsSync(this.dbPath)) {
@@ -194,6 +204,8 @@ class CommandHistoryProvider implements vscode.TreeDataProvider<CommandTreeItem>
       this.lastError = `Error loading database: ${errorMsg}`;
       this.commands = [];
       this._onDidChangeTreeData.fire();
+    } finally {
+      this.isLoading = false;
     }
   }
 
