@@ -2,7 +2,7 @@
   "name": "basher-vscode",
   "displayName": "Basher",
   "description": "Enhanced command execution dashboard integrated into VS Code",
-  "version": "1.5.4",
+  "version": "1.6.0",
   "publisher": "bazilikum",
   "engines": {
     "vscode": "^1.85.0"

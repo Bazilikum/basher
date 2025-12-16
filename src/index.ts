@@ -881,13 +881,67 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return enhanced;
       };
 
-      // Shared state for capturing processId and output
+      // Shared state for capturing processId, databaseId, and output
       let capturedProcessId: number | null = null;
+      let capturedDatabaseId: number | null = null; // DB row ID created on start
       let accumulatedStdout = '';
       let accumulatedStderr = '';
 
-      // Helper to save completed command to history and broadcast
-      const saveAndBroadcast = (result: { processId: number; exitCode: number; duration: number; stdout: string; stderr: string; timestamp: string }) => {
+      // Helper to insert command to DB on start with status='running'
+      const insertOnStart = (processId: number, cmd: string, cmdTitle: string, cmdCwd: string): number => {
+        const historyEntry = {
+          command: cmd,
+          title: cmdTitle,
+          cwd: cmdCwd,
+          timestamp: new Date().toISOString(),
+          exitCode: -1, // Placeholder for running
+          duration: 0,
+          stdout: '',
+          stderr: '',
+          processId: processId,
+          status: 'running',
+        };
+        const dbId = historyManager.saveCommand(historyEntry);
+        logger.debug({ dbId, processId, command: cmd }, 'Command inserted to DB with status=running');
+        return dbId;
+      };
+
+      // Helper to update completed command in DB and broadcast
+      const updateOnComplete = (result: { processId: number; exitCode: number; duration: number; stdout: string; stderr: string; timestamp: string }) => {
+        const commandId = capturedDatabaseId;
+
+        if (commandId) {
+          // Update existing row
+          historyManager.updateStatus(
+            commandId,
+            'completed',
+            result.exitCode,
+            result.duration,
+            result.stdout,
+            result.stderr
+          );
+          logger.debug({ commandId, processId: result.processId }, 'Command updated to status=completed');
+        } else {
+          // Fallback: insert if somehow we missed the start (shouldn't happen)
+          logger.warn({ processId: result.processId }, 'No databaseId found, inserting new row');
+          const historyEntry = {
+            command,
+            title: title || command,
+            cwd: cwd || process.cwd(),
+            timestamp: result.timestamp,
+            exitCode: result.exitCode,
+            duration: result.duration,
+            stdout: result.stdout,
+            stderr: result.stderr,
+            processId: result.processId,
+            status: 'completed',
+          };
+          capturedDatabaseId = historyManager.saveCommand(historyEntry);
+        }
+
+        // Unregister from processManager
+        processManager.unregister(result.processId);
+
         const historyEntry = {
           command,
           title: title || command,
@@ -900,14 +954,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           processId: result.processId,
           status: 'completed',
         };
-        const commandId = historyManager.saveCommand(historyEntry);
-
-        // IMPORTANT: Unregister from processManager AFTER saving to history
-        // This ensures VS Code extension can find the command in history when it polls
-        processManager.unregister(result.processId);
 
         if (webServer) {
-          webServer.broadcast('command_executed', { ...historyEntry, id: commandId });
+          webServer.broadcast('command_executed', { ...historyEntry, id: capturedDatabaseId });
         }
 
         if (instanceNotifier) {
@@ -920,11 +969,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             result.duration,
             result.stdout,
             result.stderr,
-            commandId
+            capturedDatabaseId!
           );
         }
 
-        return commandId;
+        return capturedDatabaseId;
       };
 
       // ============================================
@@ -941,10 +990,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const callbacks: CommandExecutionCallbacks = {
           onStart: (processId, cmd, cmdTitle, cmdCwd) => {
             capturedProcessId = processId;
+            // Insert to DB with status='running'
+            capturedDatabaseId = insertOnStart(processId, cmd, cmdTitle, cmdCwd);
             // Broadcast to web UI
             if (webServer) {
               webServer.broadcast('command_started', {
                 processId,
+                databaseId: capturedDatabaseId,
                 command: cmd,
                 title: cmdTitle,
                 cwd: cmdCwd,
@@ -1007,7 +1059,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
         // Set up completion handler
         commandPromise.then(result => {
-          saveAndBroadcast(result);
+          updateOnComplete(result);
           if (!patternMatched && resolveWait) {
             resolveWait({ type: 'completed', result });
           }
@@ -1112,10 +1164,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const callbacks: CommandExecutionCallbacks = {
           onStart: (processId, cmd, cmdTitle, cmdCwd) => {
             capturedProcessId = processId;
+            // Insert to DB with status='running'
+            capturedDatabaseId = insertOnStart(processId, cmd, cmdTitle, cmdCwd);
             // Broadcast to web UI
             if (webServer) {
               webServer.broadcast('command_started', {
                 processId,
+                databaseId: capturedDatabaseId,
                 command: cmd,
                 title: cmdTitle,
                 cwd: cmdCwd,
@@ -1155,7 +1210,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
         // Execute in background (don't await)
         executeCommand(command, cwd, stdin, timeout, title, callbacks)
-          .then(saveAndBroadcast)
+          .then(updateOnComplete)
           .catch(error => {
             logger.error({ error, command }, 'Background command failed');
           });
@@ -1189,10 +1244,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const callbacks: CommandExecutionCallbacks = {
         onStart: (processId, cmd, cmdTitle, cmdCwd) => {
           capturedProcessId = processId;
+          // Insert to DB with status='running'
+          capturedDatabaseId = insertOnStart(processId, cmd, cmdTitle, cmdCwd);
           // Broadcast to web UI
           if (webServer) {
             webServer.broadcast('command_started', {
               processId,
+              databaseId: capturedDatabaseId,
               command: cmd,
               title: cmdTitle,
               cwd: cmdCwd,
@@ -1231,10 +1289,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       };
 
       const result = await executeCommand(command, cwd, stdin, timeout, title, callbacks);
-      const commandId = saveAndBroadcast(result);
+      const commandId = updateOnComplete(result);
 
       // Use enhanced result with new features
-      const enhanced = enhanceResult(result, commandId);
+      const enhanced = enhanceResult(result, commandId ?? undefined);
 
       return {
         content: [{
@@ -2174,12 +2232,28 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       // Re-invoke execute_command with template params
       // This is a simplified execution - in production you'd call the full handler
+      let templateDbId: number | null = null;
       const callbacks: CommandExecutionCallbacks = {
         onStart: (processId, cmd, cmdTitle, cmdCwd) => {
+          // Insert to DB with status='running'
+          const historyEntry = {
+            command: cmd,
+            title: cmdTitle,
+            cwd: cmdCwd,
+            timestamp: new Date().toISOString(),
+            exitCode: -1,
+            duration: 0,
+            stdout: '',
+            stderr: '',
+            processId: processId,
+            status: 'running',
+          };
+          templateDbId = historyManager.saveCommand(historyEntry);
           // Broadcast to web UI
           if (webServer) {
             webServer.broadcast('command_started', {
               processId,
+              databaseId: templateDbId,
               command: cmd,
               title: cmdTitle,
               cwd: cmdCwd,
@@ -2226,26 +2300,40 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         callbacks
       );
 
-      const historyEntry = {
-        command: execParams.command,
-        title: execParams.title || execParams.command,
-        cwd: execParams.cwd || process.cwd(),
-        timestamp: result.timestamp,
-        exitCode: result.exitCode,
-        duration: result.duration,
-        stdout: result.stdout,
-        stderr: result.stderr,
-        processId: result.processId,
-        status: 'completed',
-      };
-      const commandId = historyManager.saveCommand(historyEntry);
+      // Update the existing DB row
+      let commandId: number | null = templateDbId;
+      if (commandId) {
+        historyManager.updateStatus(
+          commandId,
+          'completed',
+          result.exitCode,
+          result.duration,
+          result.stdout,
+          result.stderr
+        );
+      } else {
+        // Fallback
+        const historyEntry = {
+          command: execParams.command,
+          title: execParams.title || execParams.command,
+          cwd: execParams.cwd || process.cwd(),
+          timestamp: result.timestamp,
+          exitCode: result.exitCode,
+          duration: result.duration,
+          stdout: result.stdout,
+          stderr: result.stderr,
+          processId: result.processId,
+          status: 'completed',
+        };
+        commandId = historyManager.saveCommand(historyEntry);
+      }
 
       // IMPORTANT: Unregister from processManager AFTER saving to history
       processManager.unregister(result.processId);
 
       // Add to session if active
       const activeSessionId = sessionManager.getActiveSessionId();
-      if (activeSessionId) {
+      if (activeSessionId && commandId) {
         sessionManager.addCommandToSession(commandId);
       }
 

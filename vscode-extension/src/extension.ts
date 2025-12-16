@@ -124,42 +124,10 @@ class CommandHistoryProvider implements vscode.TreeDataProvider<CommandTreeItem>
     try {
       this.lastError = null; // Clear previous errors
 
-      // Fetch running commands from web API
-      try {
-        const url = `http://localhost:${this.serverPort}/api/running`;
-        const runningResponse = await this.fetchJson(url);
-        if (runningResponse.success && runningResponse.data) {
-          // Only update if we got valid data - don't clear on empty response
-          // as it might be a transient state
-          const newRunningCommands = runningResponse.data.map((proc: RunningProcess) => ({
-            id: proc.id,
-            command: proc.title || proc.command,
-            cwd: '',
-            timestamp: new Date(Date.now() - proc.duration).toISOString(),
-            exitCode: -1,
-            duration: proc.duration,
-            stdout: '',
-            stderr: '',
-            processId: proc.id,
-            status: 'running' as const
-          }));
-          this.runningCommands = newRunningCommands;
-        } else if (runningResponse.success && Array.isArray(runningResponse.data)) {
-          // Explicitly empty array from server - commands finished
-          this.runningCommands = [];
-        }
-        // If response.success is false, keep previous running commands
-      } catch (error) {
-        // Server might not be running or network error
-        // Keep previous running commands to prevent flickering
-        console.error('[Basher] Failed to fetch running commands (keeping previous):', error);
-      }
-
       if (!this.dbPath || !fs.existsSync(this.dbPath)) {
         this.commands = [];
-        if (this.runningCommands.length === 0) {
-          this.lastError = !this.dbPath ? 'No workspace folder found' : 'Database file not found';
-        }
+        this.runningCommands = [];
+        this.lastError = !this.dbPath ? 'No workspace folder found' : 'Database file not found';
         this._onDidChangeTreeData.fire();
         return;
       }
@@ -167,33 +135,47 @@ class CommandHistoryProvider implements vscode.TreeDataProvider<CommandTreeItem>
       const config = vscode.workspace.getConfiguration('commandNConquer');
       const limit = config.get<number>('maxHistoryItems') || 100;
 
-      // Read directly from SQLite database using sql.js
+      // Read ALL commands from SQLite database (both running and completed)
+      // This is the single source of truth now
       const SQL = await initSqlJs();
       const fileBuffer = fs.readFileSync(this.dbPath);
       const db = new SQL.Database(fileBuffer);
 
       const result = db.exec(`
-        SELECT id, command, title, cwd, timestamp, exit_code, duration, stdout, stderr, process_id
+        SELECT id, command, title, cwd, timestamp, exit_code, duration, stdout, stderr, process_id, status
         FROM command_history
-        ORDER BY id DESC
+        ORDER BY
+          CASE WHEN status = 'running' THEN 0 ELSE 1 END,
+          id DESC
         LIMIT ${limit}
       `);
 
+      // Clear both arrays
+      this.runningCommands = [];
+      this.commands = [];
+
       if (result.length > 0 && result[0].values.length > 0) {
-        this.commands = result[0].values.map((row: any[]) => ({
-          id: row[0] as number,
-          command: (row[2] as string) || (row[1] as string), // Use title if available, fallback to command
-          cwd: row[3] as string,
-          timestamp: row[4] as string,
-          exitCode: row[5] as number,
-          duration: row[6] as number,
-          stdout: (row[7] as string) || '',
-          stderr: (row[8] as string) || '',
-          processId: row[9] as number | undefined, // Include process_id for matching
-          status: 'completed' as const
-        }));
-      } else {
-        this.commands = [];
+        for (const row of result[0].values) {
+          const status = (row[10] as string) || 'completed';
+          const item: CommandHistoryItem = {
+            id: row[0] as number,
+            command: (row[2] as string) || (row[1] as string), // Use title if available
+            cwd: (row[3] as string) || '',
+            timestamp: row[4] as string,
+            exitCode: row[5] as number,
+            duration: row[6] as number,
+            stdout: (row[7] as string) || '',
+            stderr: (row[8] as string) || '',
+            processId: row[9] as number | undefined,
+            status: status === 'running' ? 'running' : 'completed'
+          };
+
+          if (status === 'running') {
+            this.runningCommands.push(item);
+          } else {
+            this.commands.push(item);
+          }
+        }
       }
 
       db.close();
@@ -203,6 +185,7 @@ class CommandHistoryProvider implements vscode.TreeDataProvider<CommandTreeItem>
       console.error('[Basher] Failed to load commands from database:', error);
       this.lastError = `Error loading database: ${errorMsg}`;
       this.commands = [];
+      this.runningCommands = [];
       this._onDidChangeTreeData.fire();
     } finally {
       this.isLoading = false;
@@ -252,26 +235,14 @@ class CommandHistoryProvider implements vscode.TreeDataProvider<CommandTreeItem>
   }
 
   getCommand(id: number): CommandHistoryItem | undefined {
-    // Check running commands first (by processId)
-    const runningCmd = this.runningCommands.find(cmd => cmd.processId === id);
+    // Now that everything comes from DB with consistent IDs,
+    // just search both arrays by database id
+    const runningCmd = this.runningCommands.find(cmd => cmd.id === id);
     if (runningCmd) {
       return runningCmd;
     }
 
-    // Check completed commands by database id
-    const completedById = this.commands.find(cmd => cmd.id === id);
-    if (completedById) {
-      return completedById;
-    }
-
-    // Also check completed commands by processId (for commands that just finished)
-    // This handles the race condition where command completed but UI hasn't refreshed yet
-    const completedByProcessId = this.commands.find(cmd => cmd.processId === id);
-    if (completedByProcessId) {
-      return completedByProcessId;
-    }
-
-    return undefined;
+    return this.commands.find(cmd => cmd.id === id);
   }
 
   private fetchJson(url: string): Promise<any> {
@@ -305,22 +276,20 @@ class CommandTreeItem extends vscode.TreeItem {
     this.iconPath = this.getIcon();
     this.contextValue = commandData.status === 'running' ? 'runningCommandItem' : 'commandItem';
 
-    // Make it clickable to open output
-    const commandId = commandData.status === 'running' ? commandData.processId! : commandData.id;
+    // Make it clickable to open output - always use database ID now
     this.command = {
       command: 'commandNConquer.openOutput',
       title: 'Open Output',
-      arguments: [commandId, commandData.status === 'running']
+      arguments: [commandData.id, commandData.status === 'running']
     };
   }
 
   private getTooltip(): string {
     if (this.commandData.status === 'running') {
-      return `Process ID: P${this.commandData.processId}\n` +
+      return `ID: #${this.commandData.id}\n` +
              `Command: ${this.commandData.command}\n` +
              `Status: ⏳ Running\n` +
-             `Duration: ${this.commandData.duration}ms\n` +
-             `(Database ID assigned on completion)`;
+             `Duration: ${this.commandData.duration}ms`;
     }
 
     const success = this.commandData.exitCode === 0;
