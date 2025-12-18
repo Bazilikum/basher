@@ -30,6 +30,10 @@ export class HistoryManager {
         // Set busy timeout to handle concurrent access during reconnects
         // Keep it short (1s) to avoid Claude Code timeout issues
         this.db.pragma('busy_timeout = 1000');
+        // Use DELETE journal mode instead of WAL so that sql.js (VS Code extension)
+        // can read the file correctly. WAL mode creates separate -wal and -shm files
+        // that sql.js doesn't understand, causing stale/inconsistent reads.
+        this.db.pragma('journal_mode = DELETE');
         this.initDatabase();
         this.advanced = new AdvancedQueries(this.db);
         // Run cleanup on initialization
