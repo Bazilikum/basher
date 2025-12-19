@@ -337,9 +337,32 @@ class RunningCommandsProvider implements vscode.WebviewViewProvider {
   private _view?: vscode.WebviewView;
   private _updateInterval?: NodeJS.Timeout;
   private serverPort: number = 3000;
+  private dbPath: string | null = null;
 
   constructor(private context: vscode.ExtensionContext) {
     this.findServerPort();
+    this.findDatabasePath();
+  }
+
+  /**
+   * Find the .basher/history.db file in the workspace
+   */
+  private findDatabasePath(): void {
+    const workspaceFolders = vscode.workspace.workspaceFolders;
+    if (workspaceFolders && workspaceFolders.length > 0) {
+      const workspacePath = workspaceFolders[0].uri.fsPath;
+      const dbPath = path.join(workspacePath, '.basher', 'history.db');
+      if (fs.existsSync(dbPath)) {
+        this.dbPath = dbPath;
+        return;
+      }
+    }
+    // Try home directory
+    const homePath = process.env.HOME || process.env.USERPROFILE || '';
+    const homeDbPath = path.join(homePath, '.basher', 'history.db');
+    if (fs.existsSync(homeDbPath)) {
+      this.dbPath = homeDbPath;
+    }
   }
 
   /**
@@ -469,45 +492,66 @@ class RunningCommandsProvider implements vscode.WebviewViewProvider {
   }
 
   private async fetchRunningCommands(): Promise<any[]> {
-    const url = `http://localhost:${this.serverPort}/api/running`;
-    console.log(`[Basher] Fetching running commands from: ${url}`);
+    // Read running commands from DB (single source of truth)
+    this.findDatabasePath(); // Refresh path
 
-    return new Promise((resolve, reject) => {
-      http.get(url, (res) => {
-        let data = '';
-        res.on('data', (chunk) => data += chunk);
-        res.on('end', async () => {
-          try {
-            const result = JSON.parse(data);
-            if (result.success && result.data) {
-              console.log(`[Basher] Found ${result.data.length} running commands on port ${this.serverPort}`);
+    if (!this.dbPath || !fs.existsSync(this.dbPath)) {
+      return [];
+    }
 
-              // Fetch output for each running command
-              const commandsWithOutput = await Promise.all(
-                result.data.map(async (cmd: any) => {
-                  try {
-                    const output = await this.fetchProcessOutput(cmd.id);
-                    return { ...cmd, stdout: output.stdout || '', stderr: output.stderr || '' };
-                  } catch (error) {
-                    console.error(`[Basher] Failed to fetch output for process ${cmd.id}:`, error);
-                    return { ...cmd, stdout: '', stderr: '' };
-                  }
-                })
-              );
+    try {
+      const SQL = await initSqlJs();
+      const fileBuffer = fs.readFileSync(this.dbPath);
+      const db = new SQL.Database(fileBuffer);
 
-              resolve(commandsWithOutput);
-            } else {
-              resolve([]);
+      const result = db.exec(`
+        SELECT id, command, title, cwd, timestamp, exit_code, duration, stdout, stderr, process_id, status
+        FROM command_history
+        WHERE status = 'running'
+        ORDER BY id DESC
+      `);
+
+      db.close();
+
+      if (result.length === 0 || result[0].values.length === 0) {
+        return [];
+      }
+
+      // Map DB rows to running commands format
+      const runningFromDb = result[0].values.map((row: any[]) => ({
+        id: row[0] as number,
+        command: (row[2] as string) || (row[1] as string),
+        title: row[2] as string,
+        cwd: (row[3] as string) || '',
+        timestamp: row[4] as string,
+        duration: Date.now() - new Date(row[4] as string).getTime(),
+        processId: row[9] as number,
+        isRunning: true,
+        stdout: '',
+        stderr: ''
+      }));
+
+      // Fetch live output for each running command using processId
+      const commandsWithOutput = await Promise.all(
+        runningFromDb.map(async (cmd: any) => {
+          if (cmd.processId) {
+            try {
+              const output = await this.fetchProcessOutput(cmd.processId);
+              return { ...cmd, stdout: output.stdout || '', stderr: output.stderr || '' };
+            } catch (error) {
+              // Process might have ended
+              return cmd;
             }
-          } catch (error) {
-            resolve([]);
           }
-        });
-      }).on('error', (err) => {
-        console.error(`[Basher] Failed to connect to port ${this.serverPort}:`, err);
-        resolve([]);
-      });
-    });
+          return cmd;
+        })
+      );
+
+      return commandsWithOutput;
+    } catch (error) {
+      console.error('[Basher] Failed to read running commands from DB:', error);
+      return [];
+    }
   }
 
   private async fetchProcessOutput(processId: number): Promise<any> {
