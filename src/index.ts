@@ -364,6 +364,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
+        name: 'get_server_info',
+        description: 'Get information about this Basher instance including Web UI URL/port, project directory, and server status. Useful to know where to access the web dashboard.',
+        inputSchema: {
+          type: 'object',
+          properties: {},
+        },
+      },
+      {
         name: 'clear_history',
         description: 'Clear all command history from the database. This permanently deletes all stored command executions and cannot be undone. Use with caution.',
         inputSchema: {
@@ -1783,6 +1791,39 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 name: packageJson.name,
                 version: packageJson.version,
                 description: packageJson.description,
+              },
+              null,
+              2
+            ),
+          },
+        ],
+      };
+    }
+
+    // Get server info
+    if (name === 'get_server_info') {
+      logger.info('Getting server info');
+
+      const port = webServer?.getPort() || null;
+      const webUrl = port ? `http://localhost:${port}` : null;
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(
+              {
+                version: packageJson.version,
+                webUI: webUrl ? {
+                  url: webUrl,
+                  port: port,
+                  status: 'running',
+                } : {
+                  status: 'not running',
+                },
+                projectDirectory: process.cwd(),
+                pid: process.pid,
+                uptime: `${Math.round(process.uptime())}s`,
               },
               null,
               2
