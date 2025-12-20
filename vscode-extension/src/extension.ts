@@ -493,6 +493,7 @@ class RunningCommandsProvider implements vscode.WebviewViewProvider {
 
   private async fetchRunningCommands(): Promise<any[]> {
     // Read running commands from DB (single source of truth)
+    // Output is now periodically flushed to DB by the server
     this.findDatabasePath(); // Refresh path
 
     if (!this.dbPath || !fs.existsSync(this.dbPath)) {
@@ -518,6 +519,7 @@ class RunningCommandsProvider implements vscode.WebviewViewProvider {
       }
 
       // Map DB rows to running commands format
+      // Output is now read directly from DB (periodically updated by server)
       const runningFromDb = result[0].values.map((row: any[]) => ({
         id: row[0] as number,
         command: (row[2] as string) || (row[1] as string),
@@ -527,56 +529,15 @@ class RunningCommandsProvider implements vscode.WebviewViewProvider {
         duration: Date.now() - new Date(row[4] as string).getTime(),
         processId: row[9] as number,
         isRunning: true,
-        stdout: '',
-        stderr: ''
+        stdout: (row[7] as string) || '', // Read from DB directly
+        stderr: (row[8] as string) || '', // Read from DB directly
       }));
 
-      // Fetch live output for each running command using processId
-      const commandsWithOutput = await Promise.all(
-        runningFromDb.map(async (cmd: any) => {
-          if (cmd.processId) {
-            try {
-              const output = await this.fetchProcessOutput(cmd.processId);
-              return { ...cmd, stdout: output.stdout || '', stderr: output.stderr || '' };
-            } catch (error) {
-              // Process might have ended
-              return cmd;
-            }
-          }
-          return cmd;
-        })
-      );
-
-      return commandsWithOutput;
+      return runningFromDb;
     } catch (error) {
       console.error('[Basher] Failed to read running commands from DB:', error);
       return [];
     }
-  }
-
-  private async fetchProcessOutput(processId: number): Promise<any> {
-    const url = `http://localhost:${this.serverPort}/api/process/${processId}/output?lines=10`;
-
-    return new Promise((resolve, reject) => {
-      http.get(url, (res) => {
-        let data = '';
-        res.on('data', (chunk) => data += chunk);
-        res.on('end', () => {
-          try {
-            const result = JSON.parse(data);
-            if (result.success && result.data) {
-              resolve(result.data);
-            } else {
-              resolve({ stdout: '', stderr: '' });
-            }
-          } catch (error) {
-            resolve({ stdout: '', stderr: '' });
-          }
-        });
-      }).on('error', () => {
-        resolve({ stdout: '', stderr: '' });
-      });
-    });
   }
 
   private _getHtmlForWebview(webview: vscode.Webview) {

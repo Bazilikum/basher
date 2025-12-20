@@ -86,6 +86,8 @@ export class HistoryManager {
     }
     migrateDatabase() {
         try {
+            // Drop the UPDATE trigger if it exists (can cause FTS corruption)
+            this.db.exec('DROP TRIGGER IF EXISTS command_history_au');
             // Check if columns exist
             const columns = this.db.prepare("PRAGMA table_info(command_history)").all();
             const hasProcessId = columns.some((col) => col.name === 'process_id');

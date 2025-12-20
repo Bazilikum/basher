@@ -7,6 +7,7 @@ import { ChildProcess } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import logger from './logger.config.js';
+import type { HistoryManager } from './history-manager.js';
 
 interface RunningProcess {
   pid: number;
@@ -18,6 +19,9 @@ interface RunningProcess {
   stderr: string;
   isOrphan?: boolean; // true if adopted from previous instance
   cwd?: string;
+  databaseId?: number; // ID in the history database for live output updates
+  lastFlushedStdoutLength: number; // Track what we've already flushed
+  lastFlushedStderrLength: number;
 }
 
 interface PersistedProcessState {
@@ -41,6 +45,9 @@ class ProcessManager {
   private subMillisCounter = 0;
   private stateFilePath: string | null = null;
   private saveDebounceTimer: NodeJS.Timeout | null = null;
+  private historyManager: HistoryManager | null = null;
+  private flushInterval: NodeJS.Timeout | null = null;
+  private static readonly FLUSH_INTERVAL_MS = 2000; // Flush output to DB every 2 seconds
 
   /**
    * Generate a globally unique processId
@@ -74,6 +81,104 @@ class ProcessManager {
   initialize(basherDir: string): void {
     this.stateFilePath = path.join(basherDir, 'running-processes.json');
     this.adoptOrphanedProcesses();
+    this.startFlushInterval();
+  }
+
+  /**
+   * Set the history manager for periodic output flushing to DB
+   */
+  setHistoryManager(historyManager: HistoryManager): void {
+    this.historyManager = historyManager;
+    logger.info('HistoryManager set for periodic output flushing');
+  }
+
+  /**
+   * Start the periodic flush interval
+   */
+  private startFlushInterval(): void {
+    if (this.flushInterval) {
+      return; // Already running
+    }
+
+    this.flushInterval = setInterval(() => {
+      this.flushOutputToDb();
+    }, ProcessManager.FLUSH_INTERVAL_MS);
+
+    logger.debug({ intervalMs: ProcessManager.FLUSH_INTERVAL_MS }, 'Started output flush interval');
+  }
+
+  /**
+   * Stop the periodic flush interval
+   */
+  private stopFlushInterval(): void {
+    if (this.flushInterval) {
+      clearInterval(this.flushInterval);
+      this.flushInterval = null;
+      logger.debug('Stopped output flush interval');
+    }
+  }
+
+  /**
+   * Flush accumulated output to the database for all running processes
+   */
+  private flushOutputToDb(): void {
+    if (!this.historyManager) {
+      return; // No history manager set yet
+    }
+
+    for (const [processId, proc] of this.processes.entries()) {
+      if (!proc.databaseId) {
+        continue; // No database ID yet, skip
+      }
+
+      // Check if there's new output since last flush
+      const hasNewStdout = proc.stdout.length > proc.lastFlushedStdoutLength;
+      const hasNewStderr = proc.stderr.length > proc.lastFlushedStderrLength;
+
+      if (!hasNewStdout && !hasNewStderr) {
+        continue; // No new output
+      }
+
+      try {
+        const duration = Date.now() - proc.startTime;
+
+        // Update the database with current stdout/stderr
+        this.historyManager.updateStatus(
+          proc.databaseId,
+          'running', // Keep status as running
+          undefined, // exitCode unchanged
+          duration,
+          proc.stdout,
+          proc.stderr
+        );
+
+        // Update flush tracking
+        proc.lastFlushedStdoutLength = proc.stdout.length;
+        proc.lastFlushedStderrLength = proc.stderr.length;
+
+        logger.debug({
+          processId,
+          databaseId: proc.databaseId,
+          stdoutLen: proc.stdout.length,
+          stderrLen: proc.stderr.length
+        }, 'Flushed output to DB');
+      } catch (error) {
+        logger.error({ error, processId, databaseId: proc.databaseId }, 'Failed to flush output to DB');
+      }
+    }
+  }
+
+  /**
+   * Set the database ID for a running process (called after DB insert)
+   */
+  setDatabaseId(processId: number, databaseId: number): void {
+    const proc = this.processes.get(processId);
+    if (proc) {
+      proc.databaseId = databaseId;
+      logger.debug({ processId, databaseId }, 'Database ID set for process');
+    } else {
+      logger.warn({ processId, databaseId }, 'Cannot set database ID - process not found');
+    }
   }
 
   /**
@@ -109,7 +214,9 @@ class ProcessManager {
             stdout: '[Output from before restart is not available]\n',
             stderr: '',
             isOrphan: true,
-            cwd: proc.cwd
+            cwd: proc.cwd,
+            lastFlushedStdoutLength: 0,
+            lastFlushedStderrLength: 0,
           });
 
           logger.info({ processId: proc.processId, pid: proc.pid, command: proc.command }, 'Adopted orphaned process');
@@ -189,9 +296,15 @@ class ProcessManager {
   }
 
   /**
-   * Clean up state file on shutdown
+   * Clean up state file and stop intervals on shutdown
    */
   cleanup(): void {
+    // Stop the flush interval
+    this.stopFlushInterval();
+
+    // Final flush of any remaining output
+    this.flushOutputToDb();
+
     if (this.stateFilePath && fs.existsSync(this.stateFilePath)) {
       try {
         // Only remove if no processes are running
@@ -227,7 +340,9 @@ class ProcessManager {
       process: childProcess,
       stdout: '',
       stderr: '',
-      cwd
+      cwd,
+      lastFlushedStdoutLength: 0,
+      lastFlushedStderrLength: 0,
     });
 
     logger.info({ processId, pid: childProcess.pid, command, title }, 'Process registered');

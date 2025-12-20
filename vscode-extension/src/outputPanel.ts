@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
+import initSqlJs from 'sql.js';
 
 interface CommandHistoryItem {
   id: number;
@@ -26,6 +27,7 @@ export class CommandOutputPanel {
   private _disposables: vscode.Disposable[] = [];
   private _isRunning: boolean = false;
   private _pollInterval: NodeJS.Timeout | undefined;
+  private _dbPath: string | null = null;
 
   private static getExtensionVersion(): string {
     if (CommandOutputPanel.extensionVersion) {
@@ -87,6 +89,9 @@ export class CommandOutputPanel {
     this._commandId = commandId;
     this._commandData = commandData;
     this._isRunning = isRunning;
+
+    // Find database path
+    this.findDatabasePath();
 
     // Set the webview's initial html content
     this._update();
@@ -181,59 +186,115 @@ export class CommandOutputPanel {
     }
   }
 
+  /**
+   * Find the database path in the workspace
+   */
+  private findDatabasePath(): void {
+    const workspaceFolders = vscode.workspace.workspaceFolders;
+    if (workspaceFolders && workspaceFolders.length > 0) {
+      const dbFile = path.join(workspaceFolders[0].uri.fsPath, '.basher', 'history.db');
+      if (fs.existsSync(dbFile)) {
+        this._dbPath = dbFile;
+        return;
+      }
+    }
+    // Try home directory
+    const homePath = process.env.HOME || process.env.USERPROFILE || '';
+    const homeDbPath = path.join(homePath, '.basher', 'history.db');
+    if (fs.existsSync(homeDbPath)) {
+      this._dbPath = homeDbPath;
+    }
+  }
+
+  /**
+   * Poll for updates by reading from DB (no HTTP needed)
+   */
   private startPolling(): void {
-    // Poll for updates every 500ms
+    // Poll DB for updates every 500ms
     this._pollInterval = setInterval(async () => {
       try {
-        const http = await import('http');
-        const config = vscode.workspace.getConfiguration('commandNConquer');
-        const serverUrl = config.get<string>('serverUrl') || 'http://localhost:3000';
-
-        // Fetch current output from API
-        const url = new URL(`${serverUrl}/api/process/${this._commandId}/output`);
-
-        await new Promise((resolve, reject) => {
-          http.get(url.toString(), (res) => {
-            let data = '';
-            res.on('data', (chunk) => data += chunk);
-            res.on('end', () => {
-              try {
-                const result = JSON.parse(data);
-                if (result.success && result.data) {
-                  // Update command data with new output
-                  this._commandData.stdout = result.data.stdout || '';
-                  this._commandData.stderr = result.data.stderr || '';
-                  this._commandData.duration = result.data.duration || 0;
-
-                  // Send incremental update to webview instead of regenerating HTML
-                  this._panel.webview.postMessage({
-                    command: 'updateOutput',
-                    stdout: this._commandData.stdout,
-                    stderr: this._commandData.stderr,
-                    duration: this._commandData.duration
-                  });
-
-                  resolve(result);
-                } else if (!result.success) {
-                  // Command completed or not found - fetch final result from history
-                  this.stopPolling();
-                  this.fetchCompletedCommand();
-                  resolve(result);
-                }
-              } catch (error) {
-                reject(error);
-              }
-            });
-          }).on('error', () => {
-            // Stop polling if server is down
-            this.stopPolling();
-          });
-        });
+        await this.pollFromDatabase();
       } catch (error) {
-        // Stop polling on error
-        this.stopPolling();
+        console.error('[Basher] Error polling from database:', error);
+        // Don't stop polling on transient errors
       }
     }, 500);
+  }
+
+  /**
+   * Read current command state from database
+   */
+  private async pollFromDatabase(): Promise<void> {
+    this.findDatabasePath(); // Refresh path
+
+    if (!this._dbPath || !fs.existsSync(this._dbPath)) {
+      return;
+    }
+
+    try {
+      const SQL = await initSqlJs();
+      const fileBuffer = fs.readFileSync(this._dbPath);
+      const db = new SQL.Database(fileBuffer);
+
+      const result = db.exec(`
+        SELECT id, command, title, cwd, timestamp, exit_code, duration, stdout, stderr, process_id, status
+        FROM command_history
+        WHERE id = ${this._commandId}
+      `);
+
+      db.close();
+
+      if (result.length === 0 || result[0].values.length === 0) {
+        return;
+      }
+
+      const row = result[0].values[0];
+      const status = (row[10] as string) || 'completed';
+      const stdout = (row[7] as string) || '';
+      const stderr = (row[8] as string) || '';
+      const duration = (row[6] as number) || 0;
+      const exitCode = row[5] as number;
+
+      if (status === 'completed') {
+        // Command completed - stop polling and update UI
+        this.stopPolling();
+
+        this._commandData = {
+          id: row[0] as number,
+          command: (row[1] as string) || '',
+          cwd: (row[3] as string) || '',
+          timestamp: row[4] as string,
+          exitCode,
+          duration,
+          stdout,
+          stderr,
+        };
+
+        this._panel.webview.postMessage({
+          command: 'commandCompleted',
+          id: this._commandId,
+          exitCode,
+          duration,
+          stdout,
+          stderr,
+          success: exitCode === 0,
+        });
+      } else {
+        // Still running - update output
+        this._commandData.stdout = stdout;
+        this._commandData.stderr = stderr;
+        this._commandData.duration = duration;
+
+        this._panel.webview.postMessage({
+          command: 'updateOutput',
+          stdout,
+          stderr,
+          duration,
+        });
+      }
+    } catch (error) {
+      console.error('[Basher] Failed to poll from database:', error);
+    }
   }
 
   private stopPolling(): void {
@@ -241,92 +302,6 @@ export class CommandOutputPanel {
       clearInterval(this._pollInterval);
       this._pollInterval = undefined;
       this._isRunning = false;
-    }
-  }
-
-  private async fetchCompletedCommand(): Promise<void> {
-    try {
-      const http = await import('http');
-      const config = vscode.workspace.getConfiguration('commandNConquer');
-      const serverUrl = config.get<string>('serverUrl') || 'http://localhost:3000';
-
-      // Fetch completed command from history by database ID
-      const url = new URL(`${serverUrl}/api/command/${this._commandId}`);
-
-      await new Promise((resolve, reject) => {
-        http.get(url.toString(), (res) => {
-          let data = '';
-          res.on('data', (chunk) => data += chunk);
-          res.on('end', () => {
-            try {
-              const result = JSON.parse(data);
-              if (result.success && result.data) {
-                // Update command data with final result
-                this._commandData = {
-                  id: result.data.id,
-                  command: result.data.command,
-                  cwd: result.data.cwd,
-                  timestamp: result.data.timestamp,
-                  exitCode: result.data.exitCode,
-                  duration: result.data.duration,
-                  stdout: result.data.stdout || '',
-                  stderr: result.data.stderr || '',
-                };
-
-                // Send completion update to webview
-                this._panel.webview.postMessage({
-                  command: 'commandCompleted',
-                  id: result.data.id,
-                  exitCode: result.data.exitCode,
-                  duration: result.data.duration,
-                  stdout: result.data.stdout || '',
-                  stderr: result.data.stderr || '',
-                  success: result.data.exitCode === 0,
-                });
-
-                resolve(result);
-              } else {
-                // Fallback: just mark as completed with current data
-                this._panel.webview.postMessage({
-                  command: 'commandCompleted',
-                  id: this._commandId,
-                  exitCode: this._commandData.exitCode,
-                  duration: this._commandData.duration,
-                  stdout: this._commandData.stdout,
-                  stderr: this._commandData.stderr,
-                  success: this._commandData.exitCode === 0,
-                });
-                resolve(result);
-              }
-            } catch (error) {
-              reject(error);
-            }
-          });
-        }).on('error', (error) => {
-          // On error, just mark as completed with current data
-          this._panel.webview.postMessage({
-            command: 'commandCompleted',
-            id: this._commandId,
-            exitCode: this._commandData.exitCode,
-            duration: this._commandData.duration,
-            stdout: this._commandData.stdout,
-            stderr: this._commandData.stderr,
-            success: this._commandData.exitCode === 0,
-          });
-          resolve(null);
-        });
-      });
-    } catch (error) {
-      // Fallback: just update UI to show completed
-      this._panel.webview.postMessage({
-        command: 'commandCompleted',
-        id: this._commandId,
-        exitCode: this._commandData.exitCode,
-        duration: this._commandData.duration,
-        stdout: this._commandData.stdout,
-        stderr: this._commandData.stderr,
-        success: this._commandData.exitCode === 0,
-      });
     }
   }
 

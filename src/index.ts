@@ -136,6 +136,9 @@ const sessionManager = new CommandSessionManager(historyManager.getDatabase());
 // Initialize process manager with basher directory for state persistence
 processManager.initialize(basherDir);
 
+// Connect process manager to history manager for periodic output flushing
+processManager.setHistoryManager(historyManager);
+
 // Initialize whitelist manager for command security
 whitelistManager.initialize(basherDir);
 
@@ -888,6 +891,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           status: 'running',
         };
         const dbId = historyManager.saveCommand(historyEntry);
+
+        // Link the database ID to the process for periodic output flushing
+        processManager.setDatabaseId(processId, dbId);
+
         logger.debug({ dbId, processId, command: cmd }, 'Command inserted to DB with status=running');
         return dbId;
       };
@@ -2190,6 +2197,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             status: 'running',
           };
           templateDbId = historyManager.saveCommand(historyEntry);
+
+          // Link the database ID to the process for periodic output flushing
+          processManager.setDatabaseId(processId, templateDbId);
+
           // Broadcast to web UI
           if (webServer) {
             webServer.broadcast('command_started', {

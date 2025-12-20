@@ -3,6 +3,7 @@
  * Supports persistence across restarts via state file
  */
 import { ChildProcess } from 'child_process';
+import type { HistoryManager } from './history-manager.js';
 interface RunningProcess {
     pid: number;
     command: string;
@@ -13,6 +14,9 @@ interface RunningProcess {
     stderr: string;
     isOrphan?: boolean;
     cwd?: string;
+    databaseId?: number;
+    lastFlushedStdoutLength: number;
+    lastFlushedStderrLength: number;
 }
 declare class ProcessManager {
     private processes;
@@ -20,6 +24,9 @@ declare class ProcessManager {
     private subMillisCounter;
     private stateFilePath;
     private saveDebounceTimer;
+    private historyManager;
+    private flushInterval;
+    private static readonly FLUSH_INTERVAL_MS;
     /**
      * Generate a globally unique processId
      * Format: (timestamp % 10M) * 100000 + (PID % 100000) + counter
@@ -33,6 +40,26 @@ declare class ProcessManager {
      * Initialize process manager with state file path
      */
     initialize(basherDir: string): void;
+    /**
+     * Set the history manager for periodic output flushing to DB
+     */
+    setHistoryManager(historyManager: HistoryManager): void;
+    /**
+     * Start the periodic flush interval
+     */
+    private startFlushInterval;
+    /**
+     * Stop the periodic flush interval
+     */
+    private stopFlushInterval;
+    /**
+     * Flush accumulated output to the database for all running processes
+     */
+    private flushOutputToDb;
+    /**
+     * Set the database ID for a running process (called after DB insert)
+     */
+    setDatabaseId(processId: number, databaseId: number): void;
     /**
      * Check for orphaned processes from previous instance and adopt them
      */
@@ -50,7 +77,7 @@ declare class ProcessManager {
      */
     private saveState;
     /**
-     * Clean up state file on shutdown
+     * Clean up state file and stop intervals on shutdown
      */
     cleanup(): void;
     /**
