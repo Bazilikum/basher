@@ -721,7 +721,10 @@ export class WebServer {
             this.server = this.app.listen(this.port, '127.0.0.1', () => {
                 logger.info({ port: this.port, host: '127.0.0.1' }, 'Web UI started (localhost only)');
                 console.log(`\n🌐 Web UI available at: http://localhost:${this.port} (localhost only)\n`);
-                // Note: Port file is now written by InstanceDetector for singleton pattern support
+                // Register in servers.json for VS Code extension to discover
+                this.registerServer();
+                // Also write port file for backwards compatibility
+                this.writePortFile();
                 resolve();
             });
         });
@@ -789,10 +792,109 @@ export class WebServer {
         return this.port;
     }
     /**
+     * Get the basher directory path
+     */
+    getBasherDir() {
+        let projectPath;
+        const argIndex = process.argv.indexOf('--project');
+        if (argIndex !== -1 && process.argv[argIndex + 1]) {
+            projectPath = resolve(process.argv[argIndex + 1]);
+        }
+        else if (process.env.BASHER_PROJECT_ROOT) {
+            projectPath = resolve(process.env.BASHER_PROJECT_ROOT);
+        }
+        else if (process.env.DB_PATH) {
+            projectPath = dirname(process.env.DB_PATH);
+        }
+        else {
+            projectPath = homedir();
+        }
+        return join(projectPath, '.basher');
+    }
+    /**
+     * Register this server in the servers.json file for multi-instance tracking
+     */
+    registerServer() {
+        try {
+            const basherDir = this.getBasherDir();
+            if (!existsSync(basherDir)) {
+                mkdirSync(basherDir, { recursive: true });
+            }
+            const serversFile = join(basherDir, 'servers.json');
+            let servers = [];
+            // Read existing servers
+            if (existsSync(serversFile)) {
+                try {
+                    servers = JSON.parse(readFileSync(serversFile, 'utf-8'));
+                }
+                catch {
+                    servers = [];
+                }
+            }
+            // Clean up stale entries (dead PIDs)
+            servers = servers.filter(s => this.isProcessAlive(s.pid));
+            // Add this server
+            const entry = {
+                port: this.port,
+                pid: process.pid,
+                startTime: new Date().toISOString(),
+                cwd: process.cwd(),
+            };
+            servers.push(entry);
+            // Write back
+            writeFileSync(serversFile, JSON.stringify(servers, null, 2), 'utf-8');
+            logger.info({ port: this.port, pid: process.pid, totalServers: servers.length }, 'Registered server in servers.json');
+        }
+        catch (error) {
+            logger.error({ error }, 'Failed to register server in servers.json');
+        }
+    }
+    /**
+     * Unregister this server from the servers.json file
+     */
+    unregisterServer() {
+        try {
+            const basherDir = this.getBasherDir();
+            const serversFile = join(basherDir, 'servers.json');
+            if (!existsSync(serversFile)) {
+                return;
+            }
+            let servers = [];
+            try {
+                servers = JSON.parse(readFileSync(serversFile, 'utf-8'));
+            }
+            catch {
+                return;
+            }
+            // Remove this server by PID
+            servers = servers.filter(s => s.pid !== process.pid);
+            // Write back
+            writeFileSync(serversFile, JSON.stringify(servers, null, 2), 'utf-8');
+            logger.info({ port: this.port, pid: process.pid, remainingServers: servers.length }, 'Unregistered server from servers.json');
+        }
+        catch (error) {
+            logger.error({ error }, 'Failed to unregister server from servers.json');
+        }
+    }
+    /**
+     * Check if a process is alive by PID
+     */
+    isProcessAlive(pid) {
+        try {
+            process.kill(pid, 0);
+            return true;
+        }
+        catch {
+            return false;
+        }
+    }
+    /**
      * Stop the web server
      */
     stop() {
         return new Promise((resolve) => {
+            // Unregister from servers.json
+            this.unregisterServer();
             if (this.server) {
                 this.server.close(() => {
                     logger.info('Web server stopped');

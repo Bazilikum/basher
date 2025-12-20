@@ -33,6 +33,152 @@ interface Stats {
   avgDuration: number;
 }
 
+interface ServerEntry {
+  port: number;
+  pid: number;
+  startTime: string;
+  cwd: string;
+}
+
+// Web Servers Tree Data Provider
+class WebServersProvider implements vscode.TreeDataProvider<ServerTreeItem> {
+  private _onDidChangeTreeData: vscode.EventEmitter<ServerTreeItem | undefined | null | void> = new vscode.EventEmitter<ServerTreeItem | undefined | null | void>();
+  readonly onDidChangeTreeData: vscode.Event<ServerTreeItem | undefined | null | void> = this._onDidChangeTreeData.event;
+
+  private servers: ServerEntry[] = [];
+  private refreshInterval: NodeJS.Timeout | undefined;
+
+  constructor(private context: vscode.ExtensionContext) {
+    this.startAutoRefresh();
+  }
+
+  private startAutoRefresh(): void {
+    // Refresh every 5 seconds
+    this.refreshInterval = setInterval(() => {
+      this.refresh();
+    }, 5000);
+  }
+
+  public stopAutoRefresh(): void {
+    if (this.refreshInterval) {
+      clearInterval(this.refreshInterval);
+      this.refreshInterval = undefined;
+    }
+  }
+
+  refresh(): void {
+    this.loadServers();
+    this._onDidChangeTreeData.fire();
+  }
+
+  private loadServers(): void {
+    this.servers = [];
+
+    // Check workspace folder first
+    const workspaceFolders = vscode.workspace.workspaceFolders;
+    if (workspaceFolders && workspaceFolders.length > 0) {
+      const serversFile = path.join(workspaceFolders[0].uri.fsPath, '.basher', 'servers.json');
+      this.readServersFile(serversFile);
+    }
+
+    // Also check home directory
+    const homePath = process.env.HOME || process.env.USERPROFILE || '';
+    const homeServersFile = path.join(homePath, '.basher', 'servers.json');
+    if (homeServersFile !== path.join(workspaceFolders?.[0]?.uri.fsPath || '', '.basher', 'servers.json')) {
+      this.readServersFile(homeServersFile);
+    }
+
+    // Filter out stale entries (check if PIDs are alive)
+    this.servers = this.servers.filter(s => this.isProcessAlive(s.pid));
+
+    // Deduplicate by port
+    const seen = new Set<number>();
+    this.servers = this.servers.filter(s => {
+      if (seen.has(s.port)) return false;
+      seen.add(s.port);
+      return true;
+    });
+  }
+
+  private readServersFile(filePath: string): void {
+    try {
+      if (fs.existsSync(filePath)) {
+        const content = fs.readFileSync(filePath, 'utf-8');
+        const parsed = JSON.parse(content);
+        if (Array.isArray(parsed)) {
+          this.servers.push(...parsed);
+        }
+      }
+    } catch (error) {
+      console.error('[Basher] Failed to read servers.json:', error);
+    }
+  }
+
+  private isProcessAlive(pid: number): boolean {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  getTreeItem(element: ServerTreeItem): vscode.TreeItem {
+    return element;
+  }
+
+  getChildren(element?: ServerTreeItem): Thenable<ServerTreeItem[]> {
+    if (element) {
+      return Promise.resolve([]);
+    }
+
+    this.loadServers();
+
+    if (this.servers.length === 0) {
+      const noServers = new ServerTreeItem(
+        'No running servers',
+        vscode.TreeItemCollapsibleState.None
+      );
+      noServers.iconPath = new vscode.ThemeIcon('info');
+      noServers.description = 'Start a basher instance to see Web UI links';
+      return Promise.resolve([noServers]);
+    }
+
+    return Promise.resolve(
+      this.servers.map(server => {
+        const item = new ServerTreeItem(
+          `http://localhost:${server.port}`,
+          vscode.TreeItemCollapsibleState.None
+        );
+        item.iconPath = new vscode.ThemeIcon('globe');
+        item.description = path.basename(server.cwd);
+        item.tooltip = `Port: ${server.port}\nPID: ${server.pid}\nStarted: ${new Date(server.startTime).toLocaleString()}\nDirectory: ${server.cwd}`;
+        item.command = {
+          command: 'commandNConquer.openServerUrl',
+          title: 'Open Web UI',
+          arguments: [server.port]
+        };
+        item.contextValue = 'webServer';
+        return item;
+      })
+    );
+  }
+
+  public getServers(): ServerEntry[] {
+    this.loadServers();
+    return this.servers;
+  }
+}
+
+class ServerTreeItem extends vscode.TreeItem {
+  constructor(
+    public readonly label: string,
+    public readonly collapsibleState: vscode.TreeItemCollapsibleState
+  ) {
+    super(label, collapsibleState);
+  }
+}
+
 // Command History Tree Data Provider
 class CommandHistoryProvider implements vscode.TreeDataProvider<CommandTreeItem> {
   private _onDidChangeTreeData: vscode.EventEmitter<CommandTreeItem | undefined | null | void> = new vscode.EventEmitter<CommandTreeItem | undefined | null | void>();
@@ -840,11 +986,16 @@ export function activate(context: vscode.ExtensionContext) {
   console.log('Basher extension is now active');
 
   // Create providers
+  const webServersProvider = new WebServersProvider(context);
   const historyProvider = new CommandHistoryProvider(context);
   const runningCommandsProvider = new RunningCommandsProvider(context);
   const outputProvider = new CommandOutputProvider(historyProvider);
 
   // Register tree views
+  const webServersTreeView = vscode.window.createTreeView('commandNConquer.webServers', {
+    treeDataProvider: webServersProvider
+  });
+
   const historyTreeView = vscode.window.createTreeView('commandNConquer.commandHistory', {
     treeDataProvider: historyProvider
   });
@@ -1047,30 +1198,68 @@ export function activate(context: vscode.ExtensionContext) {
     })
   );
 
+  // Command to open a specific server URL (used by tree view items)
   context.subscriptions.push(
-    vscode.commands.registerCommand('commandNConquer.openWebDashboard', () => {
-      // Try to read port from .basher/port file
-      const workspaceFolders = vscode.workspace.workspaceFolders;
-      let port = 3000; // default
-
-      if (workspaceFolders && workspaceFolders.length > 0) {
-        const portFile = path.join(workspaceFolders[0].uri.fsPath, '.basher', 'port');
-        try {
-          if (fs.existsSync(portFile)) {
-            const portContent = fs.readFileSync(portFile, 'utf-8').trim();
-            const parsedPort = parseInt(portContent, 10);
-            if (!isNaN(parsedPort)) {
-              port = parsedPort;
-            }
-          }
-        } catch (error) {
-          console.error('[Basher] Failed to read port file:', error);
-        }
-      }
-
+    vscode.commands.registerCommand('commandNConquer.openServerUrl', (port: number) => {
       const serverUrl = `http://localhost:${port}`;
       vscode.env.openExternal(vscode.Uri.parse(serverUrl));
       vscode.window.showInformationMessage(`Opening Basher Web UI at ${serverUrl}`);
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('commandNConquer.openWebDashboard', async () => {
+      // Get all running servers
+      const servers = webServersProvider.getServers();
+
+      if (servers.length === 0) {
+        // No servers running - try legacy port file
+        const workspaceFolders = vscode.workspace.workspaceFolders;
+        let port = 3000;
+
+        if (workspaceFolders && workspaceFolders.length > 0) {
+          const portFile = path.join(workspaceFolders[0].uri.fsPath, '.basher', 'port');
+          try {
+            if (fs.existsSync(portFile)) {
+              const portContent = fs.readFileSync(portFile, 'utf-8').trim();
+              const parsedPort = parseInt(portContent, 10);
+              if (!isNaN(parsedPort)) {
+                port = parsedPort;
+              }
+            }
+          } catch (error) {
+            console.error('[Basher] Failed to read port file:', error);
+          }
+        }
+
+        const serverUrl = `http://localhost:${port}`;
+        vscode.env.openExternal(vscode.Uri.parse(serverUrl));
+        vscode.window.showInformationMessage(`Opening Basher Web UI at ${serverUrl}`);
+      } else if (servers.length === 1) {
+        // Single server - open it directly
+        const serverUrl = `http://localhost:${servers[0].port}`;
+        vscode.env.openExternal(vscode.Uri.parse(serverUrl));
+        vscode.window.showInformationMessage(`Opening Basher Web UI at ${serverUrl}`);
+      } else {
+        // Multiple servers - show quick pick
+        const items = servers.map(s => ({
+          label: `http://localhost:${s.port}`,
+          description: path.basename(s.cwd),
+          detail: `PID: ${s.pid} | Started: ${new Date(s.startTime).toLocaleString()}`,
+          port: s.port
+        }));
+
+        const selected = await vscode.window.showQuickPick(items, {
+          placeHolder: 'Select a Basher Web UI to open',
+          title: 'Multiple Basher Servers Running'
+        });
+
+        if (selected) {
+          const serverUrl = `http://localhost:${selected.port}`;
+          vscode.env.openExternal(vscode.Uri.parse(serverUrl));
+          vscode.window.showInformationMessage(`Opening Basher Web UI at ${serverUrl}`);
+        }
+      }
     })
   );
 
@@ -1193,12 +1382,14 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   // Cleanup
+  context.subscriptions.push(webServersTreeView);
   context.subscriptions.push(historyTreeView);
 
   context.subscriptions.push(new vscode.Disposable(() => {
     if (refreshTimer) {
       clearInterval(refreshTimer);
     }
+    webServersProvider.stopAutoRefresh();
     sseClient.disconnect();
   }));
 }

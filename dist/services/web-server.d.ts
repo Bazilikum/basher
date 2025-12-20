@@ -45,6 +45,22 @@ export declare class WebServer {
      */
     getPort(): number;
     /**
+     * Get the basher directory path
+     */
+    private getBasherDir;
+    /**
+     * Register this server in the servers.json file for multi-instance tracking
+     */
+    private registerServer;
+    /**
+     * Unregister this server from the servers.json file
+     */
+    private unregisterServer;
+    /**
+     * Check if a process is alive by PID
+     */
+    private isProcessAlive;
+    /**
      * Stop the web server
      */
     stop(): Promise<void>;
