@@ -113,20 +113,20 @@ Configure in VS Code Settings (`Cmd+,` or `Ctrl+,`):
 
 ## Workspace Isolation
 
-The extension automatically isolates commands by workspace using a smart port detection mechanism:
+The extension automatically isolates commands by workspace using the shared SQLite database:
 
-1. **Port File Detection**: When the Basher MCP server starts, it writes a `.basher/port` file containing its web server port number
-2. **Automatic Discovery**: The extension checks your workspace folder for this port file
-3. **Fallback Support**: If no workspace-specific port file is found, it falls back to checking the home directory (`~/.basher/port`)
-4. **Multi-Project Support**: Each workspace can run its own Basher instance on a different port, and the extension will connect to the correct one
+1. **Shared Database**: All Basher instances in a workspace write to the same `.basher/history.db` database
+2. **Direct Database Access**: The extension reads command history directly from the database using sql.js
+3. **Multi-Project Support**: Each workspace has its own `.basher/` folder with isolated history
+4. **Independent Instances**: Each terminal can run its own Basher server on different ports (auto-discovered)
 
 **How it works:**
 - When you open a project with a `.mcp.json` configuration that includes `--project "${workspaceFolder}"`, Basher creates a `.basher/` folder in that project
-- The port file is automatically created when the MCP server starts
-- The VS Code extension reads this file to know which port to connect to
+- All terminals write to the same `history.db` database
+- The VS Code extension reads directly from this database
 - Commands from different projects are completely isolated
 
-**No configuration needed** - it just works! Each workspace automatically connects to its own Basher instance.
+**No configuration needed** - it just works! The extension reads from the workspace's shared database.
 
 ## Features in Detail
 
@@ -204,8 +204,7 @@ The extension consists of:
 1. **CommandHistoryProvider** (TreeDataProvider) - Manages the command history tree view with direct database access using sql.js
 2. **RunningCommandsProvider** (WebviewViewProvider) - Live monitor displaying currently executing commands with real-time output
 3. **OutputPanelManager** - Manages webview panels for individual command outputs with tabbed interface
-4. **Port Detection** - Automatically discovers the correct Basher server port from workspace or home directory
-5. **Commands** - Handlers for refresh, search, rerun, and opening outputs
+4. **Commands** - Handlers for refresh, search, rerun, and opening outputs
 
 Communication methods:
 - **Database Access**: Direct SQLite reads via sql.js for command history (faster, no API dependency)

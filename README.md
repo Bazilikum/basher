@@ -16,8 +16,8 @@ MCP server for executing shell commands with enhanced logging, history tracking,
 - **Execution Metadata**: Track duration, exit codes, timestamps, working directories, and process IDs
 - **Query Templates**: Pre-optimized queries for common patterns (failures, similar commands, command chains)
 - **Web UI Dashboard**: Real-time dashboard with SSE updates, search, and statistics
-- **Auto Port Detection**: Automatically finds available port and writes to `.basher/port` for multi-instance support
-- **Singleton Pattern**: Multiple Claude terminals share a single Basher instance - subsequent terminals detect the existing server and connect to it
+- **Independent Instances**: Each terminal gets its own web server with automatic port discovery (3000, 3001, 3002...)
+- **Shared Database**: All instances share the same SQLite database for unified command history
 - **VS Code Extension**: Fully integrated sidebar panel with live output streaming and custom titles
 - **Background Execution**: Commands run asynchronously by default with instant API responses
 - **Live Output Monitoring**: Watch command output in real-time with per-line timestamps
@@ -138,7 +138,7 @@ The Basher VS Code extension provides a native sidebar panel to browse command h
   - Auto-scroll toggle
   - Live streaming for running commands
   - Per-line timestamps
-- **Workspace Isolation**: Automatically connects to the correct Basher instance per workspace via port file detection
+- **Workspace Isolation**: Connects to workspace's Basher instance via shared database
 - **Real-time Updates**: Tree view refreshes every 1 second to show new commands
 - **Quick Actions**: Rerun commands or view details with inline buttons
 - **Search**: Full-text search across command history
@@ -163,44 +163,29 @@ Basher automatically starts a web dashboard when the MCP server runs:
 
 **URL**: http://localhost:3000 (default starting port, auto-increments if busy)
 
-#### Port Auto-Detection & Multi-Terminal Support
+#### Multi-Terminal Support
 
-Basher uses a **singleton pattern** to support multiple Claude terminals sharing a single web server instance:
+Each Basher instance runs independently with its own web server:
 
-**First Terminal (Primary Instance)**:
-1. Starts from `WEB_PORT` environment variable (default: 3000)
-2. If that port is busy, tries the next port (3001, 3002, etc.)
-3. Writes the port and PID to `.basher/port` and `.basher/pid` files
-4. Starts the web server and MCP server
-5. Shows: `🌐 Web UI available at: http://localhost:3000`
+**How It Works**:
+1. Each terminal starts its own MCP server and web server
+2. Web server starts from `WEB_PORT` (default: 3000)
+3. If that port is busy, automatically finds next available (3001, 3002, etc.)
+4. All instances share the same SQLite database (`.basher/history.db`)
+5. Shows: `🌐 Web UI available at: http://localhost:3000` (or 3001, 3002...)
 
-**Subsequent Terminals (Client Mode)**:
-1. Detects existing instance via health check on the port file
-2. Skips starting web server (uses existing one)
-3. Starts only the MCP server (all tools work normally)
-4. **Notifies primary instance** of command events via HTTP for live visibility
-5. Shows: `🔗 Connected to existing Basher instance at: http://localhost:3000`
-
-**Multi-Instance Live Visibility** (v1.6.0+):
-- Secondary instances send real-time notifications to the primary's web server
-- **Live streaming**: Command output is streamed to web UI as it happens
-- **Running commands**: Commands from all terminals appear in `/api/running`
-- **SSE broadcasts**: Web UI receives events from all instances in real-time
+**Benefits**:
+- **Simple architecture**: No coordination between instances needed
+- **Shared history**: All terminals write to the same database
+- **No conflicts**: Each terminal gets its own web server port
+- **Independent operation**: Terminals don't depend on each other
+- **Unified history**: VS Code extension reads from shared database
 
 **Process State Persistence** (v1.8.1+):
 - Running processes are persisted to `.basher/running-processes.json`
 - When Basher restarts, orphaned processes are automatically adopted
 - Adopted processes appear in running commands list with preserved metadata
-- Enables visibility of long-running commands across context resets and breaks
-
-**Benefits**:
-- All Claude terminals share the same command history and web dashboard
-- No port conflicts or resource duplication
-- Web UI shows commands from all terminals in real-time (including live output)
-- Running commands from any terminal visible in VS Code extension
-- **Long-running commands survive Basher restarts** (v1.8.1+)
-- When primary instance shuts down, instance files are cleaned up automatically
-- Next terminal to start becomes the new primary instance
+- Enables visibility of long-running commands across context resets
 
 #### Dashboard Features
 
@@ -307,12 +292,9 @@ The web server also provides a REST API:
 - `GET /api/events` - Server-Sent Events stream
 - `DELETE /api/history` - Clear all history
 
-##### Multi-Instance Coordination
+##### Health Check
 
-- `POST /api/notify` - Receive command events from secondary instances (used internally)
-  - Event types: `command_start`, `command_output`, `command_complete`, `command_terminated`
-  - Enables live visibility of commands across all Claude terminals
-- `GET /api/health` - Health check endpoint (used by instance detection)
+- `GET /health` - Health check endpoint for monitoring
 
 **Example**: Check statistics from the command line:
 ```bash
@@ -515,9 +497,8 @@ Create `.mcp.json` in each project root:
 **What Happens Automatically:**
 - ✅ Each project gets its own `.basher/history.db` database
 - ✅ `.basher/.gitignore` is auto-created to exclude database and runtime files
-- ✅ `.basher/port` file is created with the actual web server port
 - ✅ Port auto-detection: if configured port is busy, finds next available
-- ✅ VS Code extension reads `.basher/port` to connect to correct instance
+- ✅ VS Code extension reads from shared database
 - ✅ Command history is completely isolated per project
 - ✅ No manual path configuration needed
 - ✅ Multiple instances can run simultaneously without conflicts
@@ -1841,10 +1822,8 @@ basher/
 │   │   ├── history-manager.ts         # SQLite history management
 │   │   ├── advanced-queries.ts        # Token-efficient query methods
 │   │   ├── process-manager.ts         # Process tracking and termination
-│   │   ├── instance-detector.ts       # Singleton pattern detection
-│   │   ├── instance-notifier.ts       # Multi-instance HTTP notifications
 │   │   ├── logger.config.ts           # Pino logger configuration
-│   │   ├── web-server.ts              # Web UI server with SSE
+│   │   ├── web-server.ts              # Web UI server with SSE and auto port discovery
 │   │   ├── whitelist-manager.ts       # Command whitelisting security
 │   │   ├── output-parser.ts           # Structured output parsing (jest, pytest, etc.)
 │   │   ├── command-templates.ts       # Reusable command templates

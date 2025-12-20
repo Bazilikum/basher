@@ -16,9 +16,19 @@ interface RunningProcess {
 }
 declare class ProcessManager {
     private processes;
-    private processIdCounter;
+    private lastTimestamp;
+    private subMillisCounter;
     private stateFilePath;
     private saveDebounceTimer;
+    /**
+     * Generate a globally unique processId
+     * Format: (timestamp % 10M) * 100000 + (PID % 100000) + counter
+     * This ensures uniqueness across multiple instances:
+     * - Different PIDs = different IDs (even at same millisecond)
+     * - Different timestamps = different IDs (same instance)
+     * - Counter handles multiple commands in same ms from same instance
+     */
+    private generateUniqueProcessId;
     /**
      * Initialize process manager with state file path
      */

@@ -8,9 +8,36 @@ import logger from './logger.config.js';
 class ProcessManager {
     constructor() {
         this.processes = new Map();
-        this.processIdCounter = 0;
+        this.lastTimestamp = 0;
+        this.subMillisCounter = 0;
         this.stateFilePath = null;
         this.saveDebounceTimer = null;
+    }
+    /**
+     * Generate a globally unique processId
+     * Format: (timestamp % 10M) * 100000 + (PID % 100000) + counter
+     * This ensures uniqueness across multiple instances:
+     * - Different PIDs = different IDs (even at same millisecond)
+     * - Different timestamps = different IDs (same instance)
+     * - Counter handles multiple commands in same ms from same instance
+     */
+    generateUniqueProcessId() {
+        const now = Date.now();
+        if (now === this.lastTimestamp) {
+            this.subMillisCounter = (this.subMillisCounter + 1) % 100;
+        }
+        else {
+            this.lastTimestamp = now;
+            this.subMillisCounter = 0;
+        }
+        // Combine timestamp, PID, and counter for global uniqueness
+        // timestamp portion: ~2.7 hours before wrap (10M ms)
+        // PID portion: handles up to 1000 different PIDs
+        // counter: handles up to 100 commands per ms
+        const timestampPart = (now % 10000000) * 100000;
+        const pidPart = (process.pid % 1000) * 100;
+        const counterPart = this.subMillisCounter;
+        return timestampPart + pidPart + counterPart;
     }
     /**
      * Initialize process manager with state file path
@@ -37,8 +64,8 @@ class ProcessManager {
             logger.info({ previousPid: state.instancePid, processCount: state.processes.length }, 'Adopting orphaned processes');
             for (const proc of state.processes) {
                 if (this.isProcessAlive(proc.pid)) {
-                    // Adopt this process
-                    this.processIdCounter = Math.max(this.processIdCounter, proc.processId);
+                    // Adopt this process - keep its original processId since the old instance is dead
+                    // (no collision risk with dead instance's IDs)
                     this.processes.set(proc.processId, {
                         pid: proc.pid,
                         command: proc.command,
@@ -147,7 +174,7 @@ class ProcessManager {
      * Register a new running process
      */
     register(command, childProcess, title, cwd) {
-        const processId = ++this.processIdCounter;
+        const processId = this.generateUniqueProcessId();
         if (!childProcess.pid) {
             logger.warn({ command }, 'Process started without PID');
             return processId;

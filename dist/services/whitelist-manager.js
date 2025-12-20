@@ -307,5 +307,6 @@ class WhitelistManager {
         return this.configPath;
     }
 }
-// Export singleton instance
+// Export class for testing and singleton for normal use
+export { WhitelistManager };
 export const whitelistManager = new WhitelistManager();

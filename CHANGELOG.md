@@ -5,6 +5,25 @@ All notable changes to Basher will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.12.0] - 2025-12-20
+
+### Changed
+- **Simplified Multi-Instance Architecture**: Removed singleton pattern in favor of independent instances
+  - Each terminal now gets its own web server with automatic port discovery
+  - All instances share the same SQLite database for unified command history
+  - No more primary/secondary coordination or instance notifications
+  - Simpler, more reliable operation
+
+### Removed
+- `instance-detector.ts` - No longer needed (no singleton pattern)
+- `instance-notifier.ts` - No longer needed (no cross-instance notifications)
+- `/api/notify` endpoint - Was used for cross-instance communication
+- Port/PID files (`.basher/port`, `.basher/pid`) - No longer written
+
+### Fixed
+- Eliminated race conditions related to instance coordination
+- Resolved issues with commands not completing in multi-terminal scenarios
+
 ## [1.11.0] - 2025-12-12
 
 ### Fixed

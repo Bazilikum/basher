@@ -102,5 +102,5 @@ declare class WhitelistManager {
      */
     getConfigPath(): string;
 }
+export { WhitelistManager };
 export declare const whitelistManager: WhitelistManager;
-export {};

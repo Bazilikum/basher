@@ -29,8 +29,6 @@ import { HistoryManager, type HistoryManagerOptions } from './services/history-m
 import { executeCommand, type CommandExecutionCallbacks } from './services/command-executor.js';
 import { processManager } from './services/process-manager.js';
 import { WebServer } from './services/web-server.js';
-import { InstanceDetector, type ExistingInstance } from './services/instance-detector.js';
-import { InstanceNotifier } from './services/instance-notifier.js';
 import { encodeOutput, type OutputFormat } from './utils/toon-encoder.js';
 import {
   parseOutput,
@@ -141,20 +139,8 @@ processManager.initialize(basherDir);
 // Initialize whitelist manager for command security
 whitelistManager.initialize(basherDir);
 
-// Instance detector for singleton pattern
-const instanceDetector = new InstanceDetector({ basherDir });
-
-// Track whether this instance is the primary (web server owner)
-let isPrimaryInstance = false;
-
-// Initialize web server (will start in main() if primary instance)
+// Web server instance (each terminal gets its own)
 let webServer: WebServer | null = null;
-
-// Initialize instance notifier (for secondary instances to notify primary)
-let instanceNotifier: InstanceNotifier | null = null;
-
-// Track existing instance info (when running in client mode)
-let existingInstanceInfo: ExistingInstance | null = null;
 
 // Zod schemas for input validation
 const executeCommandSchema = z.object({
@@ -959,19 +945,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           webServer.broadcast('command_executed', { ...historyEntry, id: capturedDatabaseId });
         }
 
-        if (instanceNotifier) {
-          instanceNotifier.notifyCommandComplete(
-            result.processId,
-            command,
-            title || command,
-            cwd || process.cwd(),
-            result.exitCode,
-            result.duration,
-            result.stdout,
-            result.stderr,
-            capturedDatabaseId!
-          );
-        }
 
         return capturedDatabaseId;
       };
@@ -1002,9 +975,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 cwd: cmdCwd,
               });
             }
-            if (instanceNotifier) {
-              instanceNotifier.notifyCommandStart(processId, cmd, cmdTitle, cmdCwd);
-            }
           },
           onStdout: (processId, data) => {
             accumulatedStdout += data;
@@ -1015,9 +985,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 stream: 'stdout',
                 data,
               });
-            }
-            if (instanceNotifier) {
-              instanceNotifier.notifyCommandOutput(processId, 'stdout', data);
             }
             // Check for pattern match
             if (!patternMatched && regex.test(data)) {
@@ -1038,9 +1005,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 stream: 'stderr',
                 data,
               });
-            }
-            if (instanceNotifier) {
-              instanceNotifier.notifyCommandOutput(processId, 'stderr', data);
             }
             // Check for pattern match
             if (!patternMatched && regex.test(data)) {
@@ -1176,9 +1140,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 cwd: cmdCwd,
               });
             }
-            if (instanceNotifier) {
-              instanceNotifier.notifyCommandStart(processId, cmd, cmdTitle, cmdCwd);
-            }
           },
           onStdout: (processId, data) => {
             // Broadcast output to web UI
@@ -1189,9 +1150,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 data,
               });
             }
-            if (instanceNotifier) {
-              instanceNotifier.notifyCommandOutput(processId, 'stdout', data);
-            }
           },
           onStderr: (processId, data) => {
             // Broadcast output to web UI
@@ -1201,9 +1159,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 stream: 'stderr',
                 data,
               });
-            }
-            if (instanceNotifier) {
-              instanceNotifier.notifyCommandOutput(processId, 'stderr', data);
             }
           },
         };
@@ -1256,9 +1211,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               cwd: cmdCwd,
             });
           }
-          if (instanceNotifier) {
-            instanceNotifier.notifyCommandStart(processId, cmd, cmdTitle, cmdCwd);
-          }
         },
         onStdout: (processId, data) => {
           // Broadcast output to web UI
@@ -1269,9 +1221,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               data,
             });
           }
-          if (instanceNotifier) {
-            instanceNotifier.notifyCommandOutput(processId, 'stdout', data);
-          }
         },
         onStderr: (processId, data) => {
           // Broadcast output to web UI
@@ -1281,9 +1230,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               stream: 'stderr',
               data,
             });
-          }
-          if (instanceNotifier) {
-            instanceNotifier.notifyCommandOutput(processId, 'stderr', data);
           }
         },
       };
@@ -1314,11 +1260,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       // Broadcast to web UI clients (primary instance)
       if (webServer) {
         webServer.broadcast('command_terminated', { processId });
-      }
-
-      // Notify primary instance (secondary instance)
-      if (instanceNotifier) {
-        instanceNotifier.notifyCommandTerminated(processId);
       }
 
       return {
@@ -2259,9 +2200,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               cwd: cmdCwd,
             });
           }
-          if (instanceNotifier) {
-            instanceNotifier.notifyCommandStart(processId, cmd, cmdTitle, cmdCwd);
-          }
         },
         onStdout: (processId, data) => {
           // Broadcast output to web UI
@@ -2272,9 +2210,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               data,
             });
           }
-          if (instanceNotifier) {
-            instanceNotifier.notifyCommandOutput(processId, 'stdout', data);
-          }
         },
         onStderr: (processId, data) => {
           // Broadcast output to web UI
@@ -2284,9 +2219,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               stream: 'stderr',
               data,
             });
-          }
-          if (instanceNotifier) {
-            instanceNotifier.notifyCommandOutput(processId, 'stderr', data);
           }
         },
       };
@@ -2653,70 +2585,29 @@ async function main() {
     // This prevents Claude Code from timing out while we do further initialization
     await new Promise(resolve => setImmediate(resolve));
 
-    // Check for existing Basher instance (singleton pattern)
-    existingInstanceInfo = await instanceDetector.checkExistingInstance();
-
-    if (existingInstanceInfo) {
-      // Another instance is already running - run in client mode (no web server)
-      isPrimaryInstance = false;
-
-      // Initialize notifier to send events to primary instance
-      instanceNotifier = new InstanceNotifier({
-        primaryPort: existingInstanceInfo.port,
-      });
-
-      logger.info(
-        {
-          existingPort: existingInstanceInfo.port,
-          existingPid: existingInstanceInfo.pid,
-        },
-        'Existing Basher instance detected, running in client mode (shared web server)'
-      );
-      console.error(`🔗 Connected to existing Basher instance at: http://localhost:${existingInstanceInfo.port}`);
-    } else {
-      // No existing instance - become the primary instance with web server
-      isPrimaryInstance = true;
-      webServer = new WebServer(historyManager, webPort);
-      await webServer.start();
-
-      // Write instance files for other terminals to detect
-      instanceDetector.writeInstanceFiles(webServer.getPort());
-
-      logger.info(
-        {
-          name: packageJson.name,
-          version: packageJson.version,
-          webPort: webServer.getPort(),
-          isPrimary: true,
-        },
-        'Basher MCP server started as primary instance'
-      );
-    }
+    // Start web server (each instance gets its own, finds available port)
+    webServer = new WebServer(historyManager, webPort);
+    await webServer.start();
 
     logger.info(
       {
         name: packageJson.name,
         version: packageJson.version,
-        isPrimaryInstance,
-        webPort: isPrimaryInstance ? webServer?.getPort() : existingInstanceInfo?.port,
+        webPort: webServer.getPort(),
       },
-      'Basher MCP server started successfully'
+      'Basher MCP server started'
     );
 
     // Graceful shutdown
     const shutdown = async (signal?: string) => {
-      logger.info({ isPrimaryInstance, signal, uptime: process.uptime() }, 'Shutting down gracefully...');
+      logger.info({ signal, uptime: process.uptime() }, 'Shutting down gracefully...');
 
       // Save or cleanup process state before exit
       processManager.cleanup();
 
-      if (isPrimaryInstance) {
-        // Primary instance: stop web server and clean up instance files
-        if (webServer) {
-          await webServer.stop();
-        }
-        instanceDetector.cleanup();
-        logger.info('Primary instance shutdown complete, instance files cleaned up');
+      // Stop web server
+      if (webServer) {
+        await webServer.stop();
       }
 
       historyManager.close();

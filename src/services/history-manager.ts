@@ -91,6 +91,9 @@ export class HistoryManager {
         USING fts5(command, stdout, stderr, content='command_history', content_rowid='id');
 
       -- Trigger to keep FTS table in sync with main table
+      -- Note: We only sync INSERT and DELETE. UPDATE is skipped because:
+      -- 1. Command text, stdout, stderr shouldn't change after initial save
+      -- 2. Updating FTS content tables can cause corruption issues
       CREATE TRIGGER IF NOT EXISTS command_history_ai AFTER INSERT ON command_history BEGIN
         INSERT INTO command_history_fts(rowid, command, stdout, stderr)
         VALUES (new.id, new.command, new.stdout, new.stderr);
@@ -98,11 +101,6 @@ export class HistoryManager {
 
       CREATE TRIGGER IF NOT EXISTS command_history_ad AFTER DELETE ON command_history BEGIN
         DELETE FROM command_history_fts WHERE rowid = old.id;
-      END;
-
-      CREATE TRIGGER IF NOT EXISTS command_history_au AFTER UPDATE ON command_history BEGIN
-        UPDATE command_history_fts SET command = new.command, stdout = new.stdout, stderr = new.stderr
-        WHERE rowid = new.id;
       END;
     `);
 
@@ -114,6 +112,9 @@ export class HistoryManager {
 
   private migrateDatabase(): void {
     try {
+      // Drop the UPDATE trigger if it exists (can cause FTS corruption)
+      this.db.exec('DROP TRIGGER IF EXISTS command_history_au');
+
       // Check if columns exist
       const columns = this.db.prepare("PRAGMA table_info(command_history)").all() as any[];
       const hasProcessId = columns.some((col: any) => col.name === 'process_id');
@@ -181,20 +182,39 @@ export class HistoryManager {
    */
   updateStatus(id: number, status: string, exitCode?: number, duration?: number, stdout?: string, stderr?: string): void {
     try {
-      const stmt = this.db.prepare(`
-        UPDATE command_history
-        SET status = ?,
-            exit_code = COALESCE(?, exit_code),
-            duration = COALESCE(?, duration),
-            stdout = COALESCE(?, stdout),
-            stderr = COALESCE(?, stderr)
-        WHERE id = ?
-      `);
+      // Build dynamic update to handle optional fields properly
+      const updates: string[] = ['status = @status'];
+      const params: Record<string, unknown> = { status, id };
 
-      stmt.run(status, exitCode, duration, stdout, stderr, id);
-      logger.debug({ id, status }, 'Command status updated');
+      if (exitCode !== undefined) {
+        updates.push('exit_code = @exitCode');
+        params.exitCode = exitCode;
+      }
+      if (duration !== undefined) {
+        updates.push('duration = @duration');
+        params.duration = duration;
+      }
+      if (stdout !== undefined) {
+        updates.push('stdout = @stdout');
+        params.stdout = stdout;
+      }
+      if (stderr !== undefined) {
+        updates.push('stderr = @stderr');
+        params.stderr = stderr;
+      }
+
+      const sql = `UPDATE command_history SET ${updates.join(', ')} WHERE id = @id`;
+      logger.debug({ sql, params }, 'Executing updateStatus SQL');
+      const stmt = this.db.prepare(sql);
+      const result = stmt.run(params);
+      logger.debug({ id, status, changes: result.changes }, 'Command status updated');
+
+      if (result.changes === 0) {
+        logger.warn({ id }, 'updateStatus: No rows were updated');
+      }
     } catch (error) {
       logger.error({ error, id, status }, 'Failed to update command status');
+      throw error; // Re-throw to help with debugging
     }
   }
 
@@ -216,6 +236,7 @@ export class HistoryManager {
       return results.map(row => ({
         id: row.id,
         command: row.command,
+        title: row.title,
         cwd: row.cwd,
         timestamp: row.timestamp,
         exitCode: row.exit_code,
@@ -318,6 +339,7 @@ export class HistoryManager {
       return results.map(row => ({
         id: row.id,
         command: row.command,
+        title: row.title,
         cwd: row.cwd,
         timestamp: row.timestamp,
         exitCode: row.exit_code,
@@ -349,6 +371,7 @@ export class HistoryManager {
       return results.map(row => ({
         id: row.id,
         command: row.command,
+        title: row.title,
         cwd: row.cwd,
         timestamp: row.timestamp,
         exitCode: row.exit_code,
@@ -414,13 +437,8 @@ export class HistoryManager {
       `).run(this.maxEntries);
       deletedByCount = countResult.changes;
 
-      // Also clean up orphaned FTS entries
-      if (deletedByAge > 0 || deletedByCount > 0) {
-        this.db.exec(`
-          DELETE FROM command_history_fts
-          WHERE rowid NOT IN (SELECT id FROM command_history)
-        `);
-      }
+      // Note: FTS cleanup is handled automatically by the DELETE trigger
+      // Do NOT manually delete from command_history_fts as this can corrupt the FTS index
 
       if (deletedByAge > 0 || deletedByCount > 0) {
         logger.info({
