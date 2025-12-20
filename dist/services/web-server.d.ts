@@ -37,7 +37,7 @@ export declare class WebServer {
      */
     start(): Promise<void>;
     /**
-     * Write the current port to a file for the VS Code extension
+     * Write the current port to a file for the VS Code extension and Claude Code status line
      */
     private writePortFile;
     /**

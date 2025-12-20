@@ -13,6 +13,18 @@
 export interface WhitelistEntry {
     approvedAt: string;
     description?: string;
+    /**
+     * Optional regex patterns for allowed arguments.
+     * If set, the command arguments must match at least one pattern.
+     * If not set, all arguments are allowed.
+     */
+    allowedArgs?: string[];
+    /**
+     * Optional regex patterns for blocked arguments.
+     * If any pattern matches, the command is blocked.
+     * Checked after allowedArgs.
+     */
+    blockedArgs?: string[];
 }
 /**
  * Whitelist file structure
@@ -41,15 +53,31 @@ export interface WhitelistCheckResult {
  */
 export declare function extractCommandBase(command: string): string;
 /**
+ * Configuration for WhitelistManager dependency injection
+ */
+export interface WhitelistManagerConfig {
+    /** Directory for whitelist file persistence */
+    basherDir: string;
+}
+/**
  * WhitelistManager - manages command whitelist
  */
-declare class WhitelistManager {
+export declare class WhitelistManager {
     private config;
     private configPath;
     private initialized;
-    constructor();
+    /**
+     * Create a new WhitelistManager instance
+     * @param config - Optional configuration with basherDir
+     */
+    constructor(config?: WhitelistManagerConfig);
+    /**
+     * Internal initialization with basher directory
+     */
+    private initializeWithDir;
     /**
      * Initialize the whitelist manager with the basher directory path
+     * @deprecated Use constructor config instead
      */
     initialize(basherDir: string): void;
     /**
@@ -65,9 +93,17 @@ declare class WhitelistManager {
      */
     check(command: string): WhitelistCheckResult;
     /**
-     * Add a command to the whitelist
+     * Validate command arguments against allowedArgs and blockedArgs patterns
      */
-    add(commandBase: string, description?: string): {
+    private validateArguments;
+    /**
+     * Options for adding a command to the whitelist
+     */
+    add(commandBase: string, options?: {
+        description?: string;
+        allowedArgs?: string[];
+        blockedArgs?: string[];
+    }): {
         success: boolean;
         message: string;
     };
@@ -87,6 +123,8 @@ declare class WhitelistManager {
             base: string;
             approvedAt: string;
             description?: string;
+            allowedArgs?: string[];
+            blockedArgs?: string[];
         }>;
     };
     /**
@@ -102,5 +140,9 @@ declare class WhitelistManager {
      */
     getConfigPath(): string;
 }
-export { WhitelistManager };
+/**
+ * Default singleton instance for backward compatibility.
+ * Prefer creating instances with WhitelistManager constructor for new code.
+ * @deprecated Use `new WhitelistManager(config)` for dependency injection
+ */
 export declare const whitelistManager: WhitelistManager;

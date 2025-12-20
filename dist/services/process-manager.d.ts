@@ -4,6 +4,15 @@
  */
 import { ChildProcess } from 'child_process';
 import type { HistoryManager } from './history-manager.js';
+/**
+ * Configuration for ProcessManager dependency injection
+ */
+export interface ProcessManagerConfig {
+    /** Directory for state file persistence (optional for testing) */
+    basherDir?: string;
+    /** History manager for periodic output flushing to DB (optional) */
+    historyManager?: HistoryManager;
+}
 interface RunningProcess {
     pid: number;
     command: string;
@@ -18,7 +27,7 @@ interface RunningProcess {
     lastFlushedStdoutLength: number;
     lastFlushedStderrLength: number;
 }
-declare class ProcessManager {
+export declare class ProcessManager {
     private processes;
     private lastTimestamp;
     private subMillisCounter;
@@ -26,7 +35,11 @@ declare class ProcessManager {
     private saveDebounceTimer;
     private historyManager;
     private flushInterval;
-    private static readonly FLUSH_INTERVAL_MS;
+    /**
+     * Create a new ProcessManager instance
+     * @param config - Optional configuration with dependencies
+     */
+    constructor(config?: ProcessManagerConfig);
     /**
      * Generate a globally unique processId
      * Format: (timestamp % 10M) * 100000 + (PID % 100000) + counter
@@ -37,11 +50,13 @@ declare class ProcessManager {
      */
     private generateUniqueProcessId;
     /**
-     * Initialize process manager with state file path
+     * Initialize process manager after construction (for backward compatibility)
+     * @deprecated Use constructor config instead
      */
     initialize(basherDir: string): void;
     /**
      * Set the history manager for periodic output flushing to DB
+     * @deprecated Use constructor config instead
      */
     setHistoryManager(historyManager: HistoryManager): void;
     /**
@@ -133,5 +148,10 @@ declare class ProcessManager {
         duration: number;
     } | null;
 }
+/**
+ * Default singleton instance for backward compatibility.
+ * Prefer creating instances with ProcessManager constructor for new code.
+ * @deprecated Use `new ProcessManager(config)` for dependency injection
+ */
 export declare const processManager: ProcessManager;
 export {};

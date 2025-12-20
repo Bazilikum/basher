@@ -182,7 +182,7 @@ describe('WhitelistManager', () => {
     manager.initialize(basherDir);
 
     // Add a command
-    manager.add('testcmd', 'Test command');
+    manager.add('testcmd', { description: 'Test command' });
 
     // Read the file directly
     const whitelistPath = join(basherDir, 'whitelist.json');
@@ -196,7 +196,7 @@ describe('WhitelistManager', () => {
     const manager = new (WhitelistManager as any)();
     manager.initialize(basherDir);
 
-    const addResult = manager.add('', 'Empty command');
+    const addResult = manager.add('', { description: 'Empty command' });
     expect(addResult.success).toBe(false);
     expect(addResult.message).toContain('Invalid');
   });
@@ -207,8 +207,107 @@ describe('WhitelistManager', () => {
     manager.initialize(basherDir);
 
     // npm is already whitelisted
-    const addResult = manager.add('npm', 'Duplicate');
+    const addResult = manager.add('npm', { description: 'Duplicate' });
     expect(addResult.success).toBe(true);
     expect(addResult.message).toContain('already whitelisted');
+  });
+
+  describe('argument validation', () => {
+    it('allows command when allowedArgs matches', async () => {
+      const { WhitelistManager } = await import('../../src/services/whitelist-manager.js');
+      const manager = new (WhitelistManager as any)();
+      manager.initialize(basherDir);
+
+      // Add command with allowed args pattern
+      manager.add('testcmd', {
+        description: 'Test with allowed args',
+        allowedArgs: ['^--safe', '^-s'],
+      });
+
+      // Matching args should be allowed
+      expect(manager.check('testcmd --safe').allowed).toBe(true);
+      expect(manager.check('testcmd -s').allowed).toBe(true);
+    });
+
+    it('blocks command when allowedArgs does not match', async () => {
+      const { WhitelistManager } = await import('../../src/services/whitelist-manager.js');
+      const manager = new (WhitelistManager as any)();
+      manager.initialize(basherDir);
+
+      // Add command with allowed args pattern
+      manager.add('restrictedcmd', {
+        description: 'Restricted command',
+        allowedArgs: ['^--allowed-flag'],
+      });
+
+      // Non-matching args should be blocked
+      const result = manager.check('restrictedcmd --dangerous-flag');
+      expect(result.allowed).toBe(false);
+      expect(result.reason).toContain('do not match');
+    });
+
+    it('blocks command when blockedArgs matches', async () => {
+      const { WhitelistManager } = await import('../../src/services/whitelist-manager.js');
+      const manager = new (WhitelistManager as any)();
+      manager.initialize(basherDir);
+
+      // Add command with blocked args pattern
+      manager.add('blockedargscmd', {
+        description: 'Command with blocked patterns',
+        blockedArgs: ['--force', '-rf'],
+      });
+
+      // Blocked args should fail
+      const result = manager.check('blockedargscmd --force');
+      expect(result.allowed).toBe(false);
+      expect(result.reason).toContain('blocked');
+    });
+
+    it('allows command when blockedArgs does not match', async () => {
+      const { WhitelistManager } = await import('../../src/services/whitelist-manager.js');
+      const manager = new (WhitelistManager as any)();
+      manager.initialize(basherDir);
+
+      // Add command with blocked args pattern
+      manager.add('safecmd', {
+        description: 'Command with blocked patterns',
+        blockedArgs: ['--force'],
+      });
+
+      // Non-blocked args should pass
+      expect(manager.check('safecmd --safe').allowed).toBe(true);
+    });
+
+    it('blockedArgs takes precedence over allowedArgs', async () => {
+      const { WhitelistManager } = await import('../../src/services/whitelist-manager.js');
+      const manager = new (WhitelistManager as any)();
+      manager.initialize(basherDir);
+
+      // Add command with both allowed and blocked patterns
+      manager.add('mixedcmd', {
+        description: 'Mixed patterns',
+        allowedArgs: ['.*'],  // Allow everything
+        blockedArgs: ['--dangerous'],  // Except this
+      });
+
+      // Blocked pattern should still block even if allowedArgs matches
+      expect(manager.check('mixedcmd --safe').allowed).toBe(true);
+      expect(manager.check('mixedcmd --dangerous').allowed).toBe(false);
+    });
+
+    it('rejects invalid regex patterns', async () => {
+      const { WhitelistManager } = await import('../../src/services/whitelist-manager.js');
+      const manager = new (WhitelistManager as any)();
+      manager.initialize(basherDir);
+
+      // Invalid regex should fail
+      const result = manager.add('badregex', {
+        description: 'Bad regex',
+        allowedArgs: ['[invalid'],  // Invalid regex
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.message).toContain('Invalid');
+    });
   });
 });

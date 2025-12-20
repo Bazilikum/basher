@@ -582,6 +582,9 @@ describe('HistoryManager', () => {
         });
       }
 
+      // Cleanup is now periodic, so call it explicitly for this test
+      historyManager.cleanup();
+
       const history = historyManager.getRecentHistory();
       expect(history.length).toBe(3);
       // Should have the 3 most recent

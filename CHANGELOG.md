@@ -5,6 +5,38 @@ All notable changes to Basher will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.17.0] - 2025-12-20
+
+### Added
+- **Audit Logger** (`src/services/audit-logger.ts`): File-based audit trail for security events
+  - Logs command executions, blocked commands, whitelist changes
+  - Supports multiple event types: command_executed, command_blocked, whitelist_added, etc.
+- **Command Argument Validation**: Whitelist entries can now restrict arguments
+  - `allowedArgs`: Regex patterns for permitted arguments
+  - `blockedArgs`: Regex patterns for denied arguments (takes precedence)
+- **Per-Command Rate Limiting**: Stricter limits for dangerous commands
+  - `rm`, `sudo`: 5 requests/minute
+  - `chmod`, `chown`: 10 requests/minute
+  - `curl`, `wget`, `docker`: 20-30 requests/minute
+  - `npm`, `git`: 60 requests/minute
+- **Integration Tests**: 17 new integration tests for MCP tool execution flow
+- **Architecture Documentation**: `docs/architecture.md` with system diagrams
+- **API Documentation**: `docs/api.md` covering all 31 MCP tools and Web API
+
+### Changed
+- **Refactored Tool Handlers**: Extracted 31 tools from index.ts to `src/tools/` directory
+  - Organized into: admin, execute, history, templates, sessions, whitelist
+- **Dependency Injection**: ProcessManager and WhitelistManager now support constructor injection
+- **Optimized Cleanup**: History cleanup now runs periodically (every 100 saves or 5 minutes)
+- **Centralized Constants**: Magic numbers moved to `src/constants.ts`
+- **Shared Utilities**: Path resolution in `src/utils/paths.ts`, error handling in `src/utils/errors.ts`
+
+### Fixed
+- Silent failures in history-manager.ts, index.ts, web-server.ts now properly logged/handled
+
+### Tests
+- 94 total tests (26 history-manager, 22 process-manager, 29 whitelist-manager, 17 integration)
+
 ## [1.12.0] - 2025-12-20
 
 ### Changed

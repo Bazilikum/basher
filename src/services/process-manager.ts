@@ -8,6 +8,17 @@ import * as fs from 'fs';
 import * as path from 'path';
 import logger from './logger.config.js';
 import type { HistoryManager } from './history-manager.js';
+import { FLUSH_INTERVAL_MS, SIGKILL_TIMEOUT_MS } from '../constants.js';
+
+/**
+ * Configuration for ProcessManager dependency injection
+ */
+export interface ProcessManagerConfig {
+  /** Directory for state file persistence (optional for testing) */
+  basherDir?: string;
+  /** History manager for periodic output flushing to DB (optional) */
+  historyManager?: HistoryManager;
+}
 
 interface RunningProcess {
   pid: number;
@@ -39,7 +50,7 @@ interface ProcessStateFile {
   updatedAt: string;
 }
 
-class ProcessManager {
+export class ProcessManager {
   private processes: Map<number, RunningProcess> = new Map();
   private lastTimestamp = 0;
   private subMillisCounter = 0;
@@ -47,7 +58,24 @@ class ProcessManager {
   private saveDebounceTimer: NodeJS.Timeout | null = null;
   private historyManager: HistoryManager | null = null;
   private flushInterval: NodeJS.Timeout | null = null;
-  private static readonly FLUSH_INTERVAL_MS = 2000; // Flush output to DB every 2 seconds
+
+  /**
+   * Create a new ProcessManager instance
+   * @param config - Optional configuration with dependencies
+   */
+  constructor(config?: ProcessManagerConfig) {
+    if (config?.historyManager) {
+      this.historyManager = config.historyManager;
+      logger.info('ProcessManager created with HistoryManager');
+    }
+
+    if (config?.basherDir) {
+      this.stateFilePath = path.join(config.basherDir, 'running-processes.json');
+      this.adoptOrphanedProcesses();
+      this.startFlushInterval();
+      logger.info({ basherDir: config.basherDir }, 'ProcessManager initialized with state persistence');
+    }
+  }
 
   /**
    * Generate a globally unique processId
@@ -76,16 +104,23 @@ class ProcessManager {
   }
 
   /**
-   * Initialize process manager with state file path
+   * Initialize process manager after construction (for backward compatibility)
+   * @deprecated Use constructor config instead
    */
   initialize(basherDir: string): void {
+    if (this.stateFilePath) {
+      logger.warn('ProcessManager already initialized, ignoring');
+      return;
+    }
     this.stateFilePath = path.join(basherDir, 'running-processes.json');
     this.adoptOrphanedProcesses();
     this.startFlushInterval();
+    logger.info({ basherDir }, 'ProcessManager initialized via initialize()');
   }
 
   /**
    * Set the history manager for periodic output flushing to DB
+   * @deprecated Use constructor config instead
    */
   setHistoryManager(historyManager: HistoryManager): void {
     this.historyManager = historyManager;
@@ -102,9 +137,9 @@ class ProcessManager {
 
     this.flushInterval = setInterval(() => {
       this.flushOutputToDb();
-    }, ProcessManager.FLUSH_INTERVAL_MS);
+    }, FLUSH_INTERVAL_MS);
 
-    logger.debug({ intervalMs: ProcessManager.FLUSH_INTERVAL_MS }, 'Started output flush interval');
+    logger.debug({ intervalMs: FLUSH_INTERVAL_MS }, 'Started output flush interval');
   }
 
   /**
@@ -396,7 +431,7 @@ class ProcessManager {
         // For orphaned processes, send signal directly via process.kill
         process.kill(proc.pid, 'SIGTERM');
 
-        // Force kill after 5 seconds if still running
+        // Force kill after timeout if still running
         setTimeout(() => {
           if (this.processes.has(processId) && this.isProcessAlive(proc.pid)) {
             logger.warn({ processId, pid: proc.pid }, 'Force killing orphaned process with SIGKILL');
@@ -407,18 +442,18 @@ class ProcessManager {
             }
           }
           this.unregister(processId);
-        }, 5000);
+        }, SIGKILL_TIMEOUT_MS);
       } else {
         // For owned processes, use the ChildProcess.kill method
         proc.process.kill('SIGTERM');
 
-        // Force kill after 5 seconds if still running
+        // Force kill after timeout if still running
         setTimeout(() => {
           if (this.processes.has(processId)) {
             logger.warn({ processId, pid: proc.pid }, 'Force killing process with SIGKILL');
             proc.process?.kill('SIGKILL');
           }
-        }, 5000);
+        }, SIGKILL_TIMEOUT_MS);
       }
 
       return true;
@@ -529,5 +564,9 @@ class ProcessManager {
   }
 }
 
-// Singleton instance
+/**
+ * Default singleton instance for backward compatibility.
+ * Prefer creating instances with ProcessManager constructor for new code.
+ * @deprecated Use `new ProcessManager(config)` for dependency injection
+ */
 export const processManager = new ProcessManager();

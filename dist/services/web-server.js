@@ -17,6 +17,7 @@ import { createServer } from 'net';
 import { homedir, tmpdir } from 'os';
 import { executeCommand } from './command-executor.js';
 import { processManager } from './process-manager.js';
+import { extractCommandBase } from './whitelist-manager.js';
 import logger from './logger.config.js';
 // ============================================================================
 // SECURITY MIDDLEWARE
@@ -69,6 +70,49 @@ const destructiveLimiter = rateLimit({
     standardHeaders: true,
     legacyHeaders: false,
 });
+// Per-command rate limits for potentially dangerous commands
+const COMMAND_RATE_LIMITS = {
+    // Very restrictive for destructive commands
+    rm: { windowMs: 60 * 1000, max: 5 },
+    sudo: { windowMs: 60 * 1000, max: 5 },
+    chmod: { windowMs: 60 * 1000, max: 10 },
+    chown: { windowMs: 60 * 1000, max: 10 },
+    // Moderate limits for network/system commands
+    curl: { windowMs: 60 * 1000, max: 30 },
+    wget: { windowMs: 60 * 1000, max: 20 },
+    docker: { windowMs: 60 * 1000, max: 30 },
+    // Standard limits for common commands
+    npm: { windowMs: 60 * 1000, max: 60 },
+    git: { windowMs: 60 * 1000, max: 60 },
+};
+// Track command-specific request counts
+const commandRequestCounts = new Map();
+/**
+ * Check per-command rate limit
+ * Returns true if allowed, false if rate limited
+ */
+function checkCommandRateLimit(commandBase) {
+    const limit = COMMAND_RATE_LIMITS[commandBase];
+    if (!limit) {
+        return { allowed: true };
+    }
+    const now = Date.now();
+    const key = commandBase;
+    let entry = commandRequestCounts.get(key);
+    // Reset if window expired
+    if (!entry || now > entry.resetAt) {
+        entry = { count: 0, resetAt: now + limit.windowMs };
+        commandRequestCounts.set(key, entry);
+    }
+    entry.count++;
+    if (entry.count > limit.max) {
+        return {
+            allowed: false,
+            reason: `Rate limit exceeded for '${commandBase}' command. Max ${limit.max} per ${limit.windowMs / 1000}s.`,
+        };
+    }
+    return { allowed: true };
+}
 // ============================================================================
 // INPUT VALIDATION SCHEMAS
 // ============================================================================
@@ -360,6 +404,16 @@ export class WebServer {
         this.app.post('/api/execute', executeLimiter, validateBody(executeCommandWebSchema), async (req, res) => {
             try {
                 const { command, cwd, stdin, timeout, background, title } = req.body;
+                // Check per-command rate limit
+                const commandBase = extractCommandBase(command);
+                const rateLimitCheck = checkCommandRateLimit(commandBase);
+                if (!rateLimitCheck.allowed) {
+                    logger.warn({ command, commandBase, reason: rateLimitCheck.reason }, 'Command rate limited');
+                    return res.status(429).json({
+                        success: false,
+                        error: rateLimitCheck.reason,
+                    });
+                }
                 const commandTitle = title || command;
                 logger.info({
                     command,
@@ -387,14 +441,30 @@ export class WebServer {
                             processId: result.processId,
                             status: 'completed',
                         };
-                        const id = this.historyManager.saveCommand(historyEntry);
+                        let id;
+                        try {
+                            id = this.historyManager.saveCommand(historyEntry);
+                        }
+                        catch (saveError) {
+                            logger.error({ saveError, command, processId: result.processId }, 'Failed to save command to history');
+                            // Still broadcast the completion even if save failed
+                            this.broadcast('command_executed', { ...historyEntry, id: null, saveError: true });
+                        }
                         // IMPORTANT: Unregister from processManager AFTER saving to history
                         // This ensures VS Code extension can find the command in history when it polls
                         processManager.unregister(result.processId);
                         // Broadcast to SSE clients
-                        this.broadcast('command_executed', { ...historyEntry, id });
+                        if (id !== undefined) {
+                            this.broadcast('command_executed', { ...historyEntry, id });
+                        }
                     }).catch(error => {
                         logger.error({ error, command }, 'Background command failed');
+                        // Broadcast failure to SSE clients so web UI can show error
+                        this.broadcast('command_failed', {
+                            command,
+                            title: commandTitle,
+                            error: error instanceof Error ? error.message : String(error),
+                        });
                     });
                     // Return immediately
                     return res.json({
@@ -730,7 +800,7 @@ export class WebServer {
         });
     }
     /**
-     * Write the current port to a file for the VS Code extension
+     * Write the current port to a file for the VS Code extension and Claude Code status line
      */
     writePortFile() {
         const debugLog = (msg) => {
@@ -770,14 +840,19 @@ export class WebServer {
             debugLog(`basherDir: ${basherDir}, exists: ${existsSync(basherDir)}`);
             if (!existsSync(basherDir)) {
                 mkdirSync(basherDir, { recursive: true });
-                debugLog(`Created basherDir`);
             }
+            // Write generic port file for VS Code extension
             const portFile = join(basherDir, 'port');
-            debugLog(`Writing port ${this.port} to: ${portFile}`);
             writeFileSync(portFile, this.port.toString(), 'utf-8');
-            debugLog(`✓ Port file written successfully`);
-            console.error(`[Basher] ✓ Port file written: ${portFile} (port: ${this.port})`);
-            logger.info({ projectPath, portFile, port: this.port }, 'Wrote port file for VS Code extension');
+            debugLog(`✓ Port file written: ${portFile}`);
+            // Write instance-specific port file keyed by parent PID (Claude Code's PID)
+            // This allows the status line script to find the port for THIS specific Claude Code instance
+            const ppid = process.ppid;
+            const instancePortFile = join(basherDir, `port.${ppid}`);
+            writeFileSync(instancePortFile, this.port.toString(), 'utf-8');
+            debugLog(`✓ Instance port file written: ${instancePortFile}`);
+            console.error(`[Basher] ✓ Port files written: ${portFile}, ${instancePortFile} (port: ${this.port})`);
+            logger.info({ projectPath, portFile, instancePortFile, ppid, port: this.port }, 'Wrote port files');
         }
         catch (error) {
             debugLog(`✗ ERROR: ${error}`);

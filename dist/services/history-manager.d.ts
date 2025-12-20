@@ -16,6 +16,10 @@ export declare class HistoryManager {
     advanced: AdvancedQueries;
     private maxEntries;
     private maxAgeMs;
+    /** Number of saves since last cleanup */
+    private savesSinceCleanup;
+    /** Timestamp of last cleanup */
+    private lastCleanupTime;
     /**
      * Get the database instance (for sharing with other managers)
      */
@@ -61,6 +65,11 @@ export declare class HistoryManager {
         failures: number;
         avgDuration: number;
     };
+    /**
+     * Check if cleanup is needed and run it if so
+     * Cleanup runs every CLEANUP_INTERVAL_SAVES saves or every CLEANUP_INTERVAL_MS milliseconds
+     */
+    private maybeCleanup;
     /**
      * Cleanup old entries based on maxEntries and maxAgeMs limits
      * Removes entries that exceed either limit (whichever comes first)

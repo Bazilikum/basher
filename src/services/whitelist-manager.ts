@@ -18,6 +18,18 @@ import logger from './logger.config.js';
 export interface WhitelistEntry {
   approvedAt: string;
   description?: string;
+  /**
+   * Optional regex patterns for allowed arguments.
+   * If set, the command arguments must match at least one pattern.
+   * If not set, all arguments are allowed.
+   */
+  allowedArgs?: string[];
+  /**
+   * Optional regex patterns for blocked arguments.
+   * If any pattern matches, the command is blocked.
+   * Checked after allowedArgs.
+   */
+  blockedArgs?: string[];
 }
 
 /**
@@ -156,25 +168,41 @@ export function extractCommandBase(command: string): string {
 }
 
 /**
+ * Configuration for WhitelistManager dependency injection
+ */
+export interface WhitelistManagerConfig {
+  /** Directory for whitelist file persistence */
+  basherDir: string;
+}
+
+/**
  * WhitelistManager - manages command whitelist
  */
-class WhitelistManager {
+export class WhitelistManager {
   private config: WhitelistConfig;
   private configPath: string;
   private initialized: boolean = false;
 
-  constructor() {
+  /**
+   * Create a new WhitelistManager instance
+   * @param config - Optional configuration with basherDir
+   */
+  constructor(config?: WhitelistManagerConfig) {
     this.config = {
       enabled: true,
       commands: {},
     };
     this.configPath = '';
+
+    if (config?.basherDir) {
+      this.initializeWithDir(config.basherDir);
+    }
   }
 
   /**
-   * Initialize the whitelist manager with the basher directory path
+   * Internal initialization with basher directory
    */
-  initialize(basherDir: string): void {
+  private initializeWithDir(basherDir: string): void {
     this.configPath = join(basherDir, 'whitelist.json');
 
     if (existsSync(this.configPath)) {
@@ -200,6 +228,18 @@ class WhitelistManager {
       },
       'Whitelist manager initialized'
     );
+  }
+
+  /**
+   * Initialize the whitelist manager with the basher directory path
+   * @deprecated Use constructor config instead
+   */
+  initialize(basherDir: string): void {
+    if (this.initialized) {
+      logger.warn('WhitelistManager already initialized, ignoring');
+      return;
+    }
+    this.initializeWithDir(basherDir);
   }
 
   /**
@@ -267,29 +307,105 @@ class WhitelistManager {
     }
 
     // Check if command base is whitelisted
-    if (this.config.commands[commandBase]) {
+    const entry = this.config.commands[commandBase];
+    if (!entry) {
+      // Not whitelisted
       return {
-        allowed: true,
-        reason: `Command '${commandBase}' is whitelisted`,
+        allowed: false,
+        reason: `Command '${commandBase}' is not whitelisted. ` +
+          `To execute this command, you must first get user approval to whitelist '${commandBase}'. ` +
+          `Ask the user: "May I whitelist the '${commandBase}' command to proceed?" ` +
+          `If approved, use the whitelist_command tool with command_base="${commandBase}", then retry.`,
         commandBase,
       };
     }
 
-    // Not whitelisted
+    // Check argument validation if configured
+    const argValidation = this.validateArguments(command, commandBase, entry);
+    if (!argValidation.allowed) {
+      return argValidation;
+    }
+
     return {
-      allowed: false,
-      reason: `Command '${commandBase}' is not whitelisted. ` +
-        `To execute this command, you must first get user approval to whitelist '${commandBase}'. ` +
-        `Ask the user: "May I whitelist the '${commandBase}' command to proceed?" ` +
-        `If approved, use the whitelist_command tool with command_base="${commandBase}", then retry.`,
+      allowed: true,
+      reason: `Command '${commandBase}' is whitelisted`,
       commandBase,
     };
   }
 
   /**
-   * Add a command to the whitelist
+   * Validate command arguments against allowedArgs and blockedArgs patterns
    */
-  add(commandBase: string, description?: string): { success: boolean; message: string } {
+  private validateArguments(
+    command: string,
+    commandBase: string,
+    entry: WhitelistEntry
+  ): WhitelistCheckResult {
+    // Extract arguments (everything after the command base)
+    const args = command.substring(command.indexOf(commandBase) + commandBase.length).trim();
+
+    // Check blocked patterns first (deny takes precedence)
+    if (entry.blockedArgs && entry.blockedArgs.length > 0) {
+      for (const pattern of entry.blockedArgs) {
+        try {
+          const regex = new RegExp(pattern);
+          if (regex.test(args)) {
+            logger.warn({ command, commandBase, pattern }, 'Command blocked by argument pattern');
+            return {
+              allowed: false,
+              reason: `Command '${commandBase}' has blocked arguments. Pattern '${pattern}' matched.`,
+              commandBase,
+            };
+          }
+        } catch (e) {
+          logger.error({ pattern, error: e }, 'Invalid blockedArgs regex pattern');
+        }
+      }
+    }
+
+    // Check allowed patterns (if specified, at least one must match)
+    if (entry.allowedArgs && entry.allowedArgs.length > 0) {
+      let anyMatch = false;
+      for (const pattern of entry.allowedArgs) {
+        try {
+          const regex = new RegExp(pattern);
+          if (regex.test(args)) {
+            anyMatch = true;
+            break;
+          }
+        } catch (e) {
+          logger.error({ pattern, error: e }, 'Invalid allowedArgs regex pattern');
+        }
+      }
+
+      if (!anyMatch) {
+        logger.warn({ command, commandBase, allowedArgs: entry.allowedArgs }, 'Command arguments not in allowed list');
+        return {
+          allowed: false,
+          reason: `Command '${commandBase}' arguments do not match any allowed pattern.`,
+          commandBase,
+        };
+      }
+    }
+
+    return {
+      allowed: true,
+      reason: 'Arguments validated',
+      commandBase,
+    };
+  }
+
+  /**
+   * Options for adding a command to the whitelist
+   */
+  add(
+    commandBase: string,
+    options?: {
+      description?: string;
+      allowedArgs?: string[];
+      blockedArgs?: string[];
+    }
+  ): { success: boolean; message: string } {
     if (!commandBase || typeof commandBase !== 'string') {
       return { success: false, message: 'Invalid command base' };
     }
@@ -299,23 +415,53 @@ class WhitelistManager {
       return { success: false, message: 'Command base cannot be empty' };
     }
 
-    // Check if already whitelisted
-    if (this.config.commands[normalized]) {
+    // Validate regex patterns
+    const validatePatterns = (patterns: string[] | undefined, name: string): string | null => {
+      if (!patterns) return null;
+      for (const pattern of patterns) {
+        try {
+          new RegExp(pattern);
+        } catch (e) {
+          return `Invalid ${name} regex pattern: ${pattern}`;
+        }
+      }
+      return null;
+    };
+
+    const allowedError = validatePatterns(options?.allowedArgs, 'allowedArgs');
+    if (allowedError) {
+      return { success: false, message: allowedError };
+    }
+
+    const blockedError = validatePatterns(options?.blockedArgs, 'blockedArgs');
+    if (blockedError) {
+      return { success: false, message: blockedError };
+    }
+
+    // Check if already whitelisted (update if adding new restrictions)
+    const existing = this.config.commands[normalized];
+    if (existing && !options?.allowedArgs && !options?.blockedArgs) {
       return {
         success: true,
         message: `Command '${normalized}' is already whitelisted`,
       };
     }
 
-    // Add to whitelist
+    // Add or update whitelist entry
     this.config.commands[normalized] = {
-      approvedAt: new Date().toISOString(),
-      description: description || undefined,
+      approvedAt: existing?.approvedAt || new Date().toISOString(),
+      description: options?.description || existing?.description,
+      allowedArgs: options?.allowedArgs || existing?.allowedArgs,
+      blockedArgs: options?.blockedArgs || existing?.blockedArgs,
     };
 
     this.save();
 
-    logger.info({ commandBase: normalized, description }, 'Added command to whitelist');
+    const action = existing ? 'Updated' : 'Added';
+    logger.info(
+      { commandBase: normalized, description: options?.description, allowedArgs: options?.allowedArgs, blockedArgs: options?.blockedArgs },
+      `${action} command in whitelist`
+    );
 
     return {
       success: true,
@@ -350,13 +496,24 @@ class WhitelistManager {
   /**
    * List all whitelisted commands
    */
-  list(): { enabled: boolean; commands: Array<{ base: string; approvedAt: string; description?: string }> } {
+  list(): {
+    enabled: boolean;
+    commands: Array<{
+      base: string;
+      approvedAt: string;
+      description?: string;
+      allowedArgs?: string[];
+      blockedArgs?: string[];
+    }>;
+  } {
     return {
       enabled: this.config.enabled,
       commands: Object.entries(this.config.commands).map(([base, entry]) => ({
         base,
         approvedAt: entry.approvedAt,
         description: entry.description,
+        allowedArgs: entry.allowedArgs,
+        blockedArgs: entry.blockedArgs,
       })),
     };
   }
@@ -385,6 +542,9 @@ class WhitelistManager {
   }
 }
 
-// Export class for testing and singleton for normal use
-export { WhitelistManager };
+/**
+ * Default singleton instance for backward compatibility.
+ * Prefer creating instances with WhitelistManager constructor for new code.
+ * @deprecated Use `new WhitelistManager(config)` for dependency injection
+ */
 export const whitelistManager = new WhitelistManager();

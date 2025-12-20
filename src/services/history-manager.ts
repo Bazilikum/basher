@@ -9,6 +9,7 @@ import { mkdirSync } from 'fs';
 import type { CommandHistoryEntry } from '../types/index.js';
 import logger from './logger.config.js';
 import { AdvancedQueries } from './advanced-queries.js';
+import { CLEANUP_INTERVAL_SAVES, CLEANUP_INTERVAL_MS } from '../constants.js';
 
 export interface HistoryManagerOptions {
   /** Maximum number of entries to keep (default: 1000) */
@@ -22,6 +23,10 @@ export class HistoryManager {
   public advanced: AdvancedQueries;
   private maxEntries: number;
   private maxAgeMs: number;
+  /** Number of saves since last cleanup */
+  private savesSinceCleanup: number = 0;
+  /** Timestamp of last cleanup */
+  private lastCleanupTime: number = Date.now();
 
   /**
    * Get the database instance (for sharing with other managers)
@@ -111,33 +116,67 @@ export class HistoryManager {
   }
 
   private migrateDatabase(): void {
+    const migrationErrors: Array<{ migration: string; error: unknown }> = [];
+
+    // Drop the UPDATE trigger if it exists (can cause FTS corruption)
+    // This is safe to fail - trigger may not exist
     try {
-      // Drop the UPDATE trigger if it exists (can cause FTS corruption)
       this.db.exec('DROP TRIGGER IF EXISTS command_history_au');
+    } catch (error) {
+      logger.warn({ error }, 'Failed to drop UPDATE trigger (may not exist)');
+    }
 
-      // Check if columns exist
-      const columns = this.db.prepare("PRAGMA table_info(command_history)").all() as any[];
-      const hasProcessId = columns.some((col: any) => col.name === 'process_id');
-      const hasStatus = columns.some((col: any) => col.name === 'status');
-      const hasTitle = columns.some((col: any) => col.name === 'title');
+    // Check if columns exist
+    let columns: any[];
+    try {
+      columns = this.db.prepare("PRAGMA table_info(command_history)").all() as any[];
+    } catch (error) {
+      // Critical error - can't read table schema
+      logger.error({ error }, 'Failed to read table schema - database may be corrupted');
+      throw new Error('Database migration failed: unable to read table schema');
+    }
 
-      if (!hasProcessId) {
+    const hasProcessId = columns.some((col: any) => col.name === 'process_id');
+    const hasStatus = columns.some((col: any) => col.name === 'status');
+    const hasTitle = columns.some((col: any) => col.name === 'title');
+
+    // Add process_id column
+    if (!hasProcessId) {
+      try {
         this.db.exec('ALTER TABLE command_history ADD COLUMN process_id INTEGER');
         logger.info('Added process_id column to command_history');
+      } catch (error) {
+        migrationErrors.push({ migration: 'add process_id column', error });
       }
+    }
 
-      if (!hasStatus) {
+    // Add status column with index
+    if (!hasStatus) {
+      try {
         this.db.exec("ALTER TABLE command_history ADD COLUMN status TEXT DEFAULT 'completed'");
         this.db.exec('CREATE INDEX IF NOT EXISTS idx_status ON command_history(status)');
         logger.info('Added status column to command_history');
+      } catch (error) {
+        migrationErrors.push({ migration: 'add status column', error });
       }
+    }
 
-      if (!hasTitle) {
+    // Add title column
+    if (!hasTitle) {
+      try {
         this.db.exec('ALTER TABLE command_history ADD COLUMN title TEXT');
         logger.info('Added title column to command_history');
+      } catch (error) {
+        migrationErrors.push({ migration: 'add title column', error });
       }
-    } catch (error) {
-      logger.error({ error }, 'Failed to migrate database');
+    }
+
+    // Report migration errors but don't fail - columns may already exist
+    if (migrationErrors.length > 0) {
+      logger.warn(
+        { errors: migrationErrors.map(e => ({ migration: e.migration, error: String(e.error) })) },
+        `${migrationErrors.length} migration(s) failed - some features may not work correctly`
+      );
     }
   }
 
@@ -167,8 +206,8 @@ export class HistoryManager {
       const id = result.lastInsertRowid as number;
       logger.debug({ id, command: entry.command, title: entry.title, processId: entry.processId, status: entry.status }, 'Command saved to history');
 
-      // Run cleanup after each save (lightweight operation when nothing to clean)
-      this.cleanup();
+      // Run cleanup periodically (every N saves or M minutes)
+      this.maybeCleanup();
 
       return id;
     } catch (error) {
@@ -406,6 +445,28 @@ export class HistoryManager {
     } catch (error) {
       logger.error({ error }, 'Failed to get history stats');
       throw error;
+    }
+  }
+
+  /**
+   * Check if cleanup is needed and run it if so
+   * Cleanup runs every CLEANUP_INTERVAL_SAVES saves or every CLEANUP_INTERVAL_MS milliseconds
+   */
+  private maybeCleanup(): void {
+    this.savesSinceCleanup++;
+    const now = Date.now();
+    const timeSinceCleanup = now - this.lastCleanupTime;
+
+    // Run cleanup if we've exceeded either threshold
+    if (this.savesSinceCleanup >= CLEANUP_INTERVAL_SAVES || timeSinceCleanup >= CLEANUP_INTERVAL_MS) {
+      logger.debug({
+        savesSinceCleanup: this.savesSinceCleanup,
+        timeSinceCleanupMs: timeSinceCleanup
+      }, 'Running periodic cleanup');
+
+      this.cleanup();
+      this.savesSinceCleanup = 0;
+      this.lastCleanupTime = now;
     }
   }
 

@@ -1095,6 +1095,28 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                     .then(updateOnComplete)
                     .catch(error => {
                     logger.error({ error, command }, 'Background command failed');
+                    // Save failure to history so it's not lost
+                    if (capturedDatabaseId) {
+                        try {
+                            historyManager.updateStatus(capturedDatabaseId, 'failed', 1, // Generic failure exit code
+                            Date.now() - new Date().getTime(), accumulatedStdout, accumulatedStderr + `\n[EXECUTION ERROR] ${error instanceof Error ? error.message : String(error)}`);
+                        }
+                        catch (saveError) {
+                            logger.error({ saveError, originalError: error }, 'Failed to save background command failure');
+                        }
+                    }
+                    // Broadcast failure to web UI
+                    if (webServer && capturedProcessId) {
+                        webServer.broadcast('command_failed', {
+                            processId: capturedProcessId,
+                            command,
+                            error: error instanceof Error ? error.message : String(error),
+                        });
+                    }
+                    // Unregister from process manager
+                    if (capturedProcessId) {
+                        processManager.unregister(capturedProcessId);
+                    }
                 });
                 // Small delay to ensure onStart callback has fired
                 await new Promise(resolve => setImmediate(resolve));
@@ -2204,7 +2226,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             const params = whitelistCommandSchema.parse(args);
             const { command_base, description } = params;
             logger.info({ commandBase: command_base, description }, 'Whitelisting command');
-            const result = whitelistManager.add(command_base, description);
+            const result = whitelistManager.add(command_base, { description });
             return {
                 content: [{
                         type: 'text',

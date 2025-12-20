@@ -5,8 +5,13 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import logger from './logger.config.js';
-class ProcessManager {
-    constructor() {
+import { FLUSH_INTERVAL_MS, SIGKILL_TIMEOUT_MS } from '../constants.js';
+export class ProcessManager {
+    /**
+     * Create a new ProcessManager instance
+     * @param config - Optional configuration with dependencies
+     */
+    constructor(config) {
         this.processes = new Map();
         this.lastTimestamp = 0;
         this.subMillisCounter = 0;
@@ -14,6 +19,16 @@ class ProcessManager {
         this.saveDebounceTimer = null;
         this.historyManager = null;
         this.flushInterval = null;
+        if (config?.historyManager) {
+            this.historyManager = config.historyManager;
+            logger.info('ProcessManager created with HistoryManager');
+        }
+        if (config?.basherDir) {
+            this.stateFilePath = path.join(config.basherDir, 'running-processes.json');
+            this.adoptOrphanedProcesses();
+            this.startFlushInterval();
+            logger.info({ basherDir: config.basherDir }, 'ProcessManager initialized with state persistence');
+        }
     }
     /**
      * Generate a globally unique processId
@@ -42,15 +57,22 @@ class ProcessManager {
         return timestampPart + pidPart + counterPart;
     }
     /**
-     * Initialize process manager with state file path
+     * Initialize process manager after construction (for backward compatibility)
+     * @deprecated Use constructor config instead
      */
     initialize(basherDir) {
+        if (this.stateFilePath) {
+            logger.warn('ProcessManager already initialized, ignoring');
+            return;
+        }
         this.stateFilePath = path.join(basherDir, 'running-processes.json');
         this.adoptOrphanedProcesses();
         this.startFlushInterval();
+        logger.info({ basherDir }, 'ProcessManager initialized via initialize()');
     }
     /**
      * Set the history manager for periodic output flushing to DB
+     * @deprecated Use constructor config instead
      */
     setHistoryManager(historyManager) {
         this.historyManager = historyManager;
@@ -65,8 +87,8 @@ class ProcessManager {
         }
         this.flushInterval = setInterval(() => {
             this.flushOutputToDb();
-        }, ProcessManager.FLUSH_INTERVAL_MS);
-        logger.debug({ intervalMs: ProcessManager.FLUSH_INTERVAL_MS }, 'Started output flush interval');
+        }, FLUSH_INTERVAL_MS);
+        logger.debug({ intervalMs: FLUSH_INTERVAL_MS }, 'Started output flush interval');
     }
     /**
      * Stop the periodic flush interval
@@ -322,7 +344,7 @@ class ProcessManager {
             if (proc.isOrphan || !proc.process) {
                 // For orphaned processes, send signal directly via process.kill
                 process.kill(proc.pid, 'SIGTERM');
-                // Force kill after 5 seconds if still running
+                // Force kill after timeout if still running
                 setTimeout(() => {
                     if (this.processes.has(processId) && this.isProcessAlive(proc.pid)) {
                         logger.warn({ processId, pid: proc.pid }, 'Force killing orphaned process with SIGKILL');
@@ -334,18 +356,18 @@ class ProcessManager {
                         }
                     }
                     this.unregister(processId);
-                }, 5000);
+                }, SIGKILL_TIMEOUT_MS);
             }
             else {
                 // For owned processes, use the ChildProcess.kill method
                 proc.process.kill('SIGTERM');
-                // Force kill after 5 seconds if still running
+                // Force kill after timeout if still running
                 setTimeout(() => {
                     if (this.processes.has(processId)) {
                         logger.warn({ processId, pid: proc.pid }, 'Force killing process with SIGKILL');
                         proc.process?.kill('SIGKILL');
                     }
-                }, 5000);
+                }, SIGKILL_TIMEOUT_MS);
             }
             return true;
         }
@@ -435,6 +457,9 @@ class ProcessManager {
         };
     }
 }
-ProcessManager.FLUSH_INTERVAL_MS = 2000; // Flush output to DB every 2 seconds
-// Singleton instance
+/**
+ * Default singleton instance for backward compatibility.
+ * Prefer creating instances with ProcessManager constructor for new code.
+ * @deprecated Use `new ProcessManager(config)` for dependency injection
+ */
 export const processManager = new ProcessManager();
