@@ -272,6 +272,8 @@ export class WebServer {
           fontSrc: ["'self'"],
           objectSrc: ["'none'"],
           frameAncestors: ["'none'"],
+          // Don't upgrade insecure requests - breaks localhost HTTP development
+          upgradeInsecureRequests: null,
         }
       },
       frameguard: { action: 'deny' },

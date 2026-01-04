@@ -19,9 +19,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Shortened tool descriptions**: ~30% reduction in tool definition tokens
 - **Timestamps off by default**: Now opt-in via `timestamps: true` for reduced output size
 
-### Deprecated
-- `get_command_by_id` → Use `get_command` with `commandId` param
-- `get_command_by_process_id` → Use `get_command` with `processId` param
+### Fixed
+- **WebUI SSE connection status**: Fixed false "Disconnected" indicator
+  - Only show disconnected when connection is actually closed (readyState=2)
+  - Handle server `connected` event to confirm live status
+- **CSP `upgrade-insecure-requests`**: Disabled for localhost HTTP development
+  - Was causing TLS errors when loading API resources via HTTP
 
 ## [1.17.0] - 2025-12-20
 
