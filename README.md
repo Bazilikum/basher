@@ -2,7 +2,9 @@
 
 MCP server for executing shell commands with enhanced logging, history tracking, and improved visibility over standard bash execution.
 
-![Basher Demo](media/basher-demo.gif)
+<p align="center">
+  <img src="media/basher-demo.gif" width="900" alt="Basher Demo">
+</p>
 
 ## Features
 
