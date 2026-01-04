@@ -1,6 +1,6 @@
 {
   "name": "basher",
-  "version": "1.18.0",
+  "version": "1.18.1",
   "description": "Basher - MCP server for executing commands with enhanced logging, history tracking, and improved visibility",
   "type": "module",
   "main": "dist/index.js",
