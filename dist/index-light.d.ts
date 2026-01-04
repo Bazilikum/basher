@@ -11,4 +11,61 @@
  *
  * Use this for reduced context overhead (~80% fewer tokens in tool definitions).
  */
-export {};
+import { HistoryManager } from './services/history-manager.js';
+import { ProcessManager } from './services/process-manager.js';
+import { WhitelistManager } from './services/whitelist-manager.js';
+/**
+ * Tool context for light version handlers
+ * Services can be injected for testing, otherwise falls back to singletons
+ */
+export interface LightToolContext {
+    historyManager: HistoryManager;
+    version: string;
+    processManager?: ProcessManager;
+    whitelistManager?: WhitelistManager;
+}
+/**
+ * Execute command handler
+ */
+export declare function handleExecuteCommand(args: unknown, context: LightToolContext): Promise<{
+    content: {
+        type: string;
+        text: string;
+    }[];
+}>;
+/**
+ * Get command handler (by ID or processId)
+ */
+export declare function handleGetCommand(args: unknown, context: LightToolContext): Promise<{
+    content: {
+        type: string;
+        text: string;
+    }[];
+}>;
+/**
+ * Get running commands handler
+ */
+export declare function handleGetRunningCommands(context?: LightToolContext): Promise<{
+    content: {
+        type: string;
+        text: string;
+    }[];
+}>;
+/**
+ * Terminate command handler
+ */
+export declare function handleTerminateCommand(args: unknown, context?: LightToolContext): Promise<{
+    content: {
+        type: string;
+        text: string;
+    }[];
+}>;
+/**
+ * Get version handler
+ */
+export declare function handleGetVersion(context: LightToolContext): Promise<{
+    content: {
+        type: string;
+        text: string;
+    }[];
+}>;
