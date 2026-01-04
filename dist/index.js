@@ -2085,6 +2085,22 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             }
             // IMPORTANT: Unregister from processManager AFTER saving to history
             processManager.unregister(result.processId);
+            // Broadcast completion to WebUI
+            if (webServer) {
+                webServer.broadcast('command_executed', {
+                    command: execParams.command,
+                    title: execParams.title || execParams.command,
+                    cwd: execParams.cwd || process.cwd(),
+                    timestamp: result.timestamp,
+                    exitCode: result.exitCode,
+                    duration: result.duration,
+                    stdout: result.stdout,
+                    stderr: result.stderr,
+                    processId: result.processId,
+                    status: 'completed',
+                    id: commandId,
+                });
+            }
             // Add to session if active
             const activeSessionId = sessionManager.getActiveSessionId();
             if (activeSessionId && commandId) {
