@@ -34,3 +34,9 @@ Thumbs.db
 
 # TypeScript
 *.tsbuildinfo
+
+# Basher runtime data
+.basher/
+
+# Local MCP config (contains absolute paths)
+.mcp.json
