@@ -102,6 +102,44 @@ Command history is stored in `data/command-history.db` using SQLite with the fol
 - Indexes on timestamp, command, and exit code
 - Automatic cleanup of old entries (configurable)
 
+## Releases
+
+### VS Code Extension
+
+To create a new VS Code extension release:
+
+1. **Update the version** in `vscode-extension/package.json`
+2. **Commit the changes**:
+   ```bash
+   git add vscode-extension/package.json
+   git commit -m "Bump VS Code extension to v1.x.x"
+   ```
+3. **Create and push a tag**:
+   ```bash
+   git tag vscode-v1.x.x
+   git push origin main --tags
+   ```
+4. **GitHub Actions** will automatically:
+   - Build the extension
+   - Package the `.vsix` file
+   - Create a GitHub release with the artifact
+
+The tag must follow the format `vscode-v*` (e.g., `vscode-v1.8.0`).
+
+### Server Release
+
+To release a new version of the Basher MCP server:
+
+1. **Update the version** in `package.json`
+2. **Update CHANGELOG.md** with release notes
+3. **Commit and tag**:
+   ```bash
+   git add package.json CHANGELOG.md
+   git commit -m "Release v1.x.x"
+   git tag v1.x.x
+   git push origin main --tags
+   ```
+
 ## Contributing
 
 Issues and pull requests are welcome at https://github.com/Bazilikum/basher
