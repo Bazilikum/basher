@@ -2,6 +2,8 @@
 
 MCP server for executing shell commands with enhanced logging, history tracking, and improved visibility over standard bash execution.
 
+![Basher Demo](media/basher-demo.gif)
+
 ## Features
 
 - **Enhanced Command Execution**: Execute shell commands with real-time output streaming and per-line timestamps

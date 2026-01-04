@@ -2,6 +2,8 @@
 
 Fully integrated VS Code extension for Basher that brings command history, statistics, and live outputs directly into your editor.
 
+![Basher Demo](../media/basher-demo.gif)
+
 ## Features
 
 ### Left Sidebar Panel
