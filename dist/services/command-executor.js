@@ -9,7 +9,7 @@ import { processManager } from './process-manager.js';
  * Returns both the command result and the process ID for tracking
  * @param callbacks Optional callbacks for real-time event notifications
  */
-export async function executeCommand(command, cwd, stdin, timeout, title, callbacks) {
+export async function executeCommand(command, cwd, stdin, timeout, title, callbacks, timestamps = false) {
     return new Promise((resolve, reject) => {
         const startTime = Date.now();
         const timestamp = new Date().toISOString();
@@ -78,17 +78,18 @@ export async function executeCommand(command, cwd, stdin, timeout, title, callba
             const lines = stdoutBuffer.split('\n');
             // Keep the last incomplete line in the buffer
             stdoutBuffer = lines.pop() || '';
-            // Add timestamps to complete lines
+            // Add lines (with optional timestamps)
             for (const line of lines) {
-                const timestamp = new Date().toISOString();
-                const timestampedLine = `[${timestamp}] ${line}\n`;
-                stdout += timestampedLine;
+                const outputLine = timestamps
+                    ? `[${new Date().toISOString()}] ${line}\n`
+                    : `${line}\n`;
+                stdout += outputLine;
                 // Also append to process manager for real-time monitoring
-                processManager.appendStdout(processId, timestampedLine);
+                processManager.appendStdout(processId, outputLine);
                 // Notify callback for multi-instance support
                 if (callbacks?.onStdout) {
                     try {
-                        callbacks.onStdout(processId, timestampedLine);
+                        callbacks.onStdout(processId, outputLine);
                     }
                     catch {
                         // Ignore callback errors for output streaming
@@ -108,17 +109,18 @@ export async function executeCommand(command, cwd, stdin, timeout, title, callba
             const lines = stderrBuffer.split('\n');
             // Keep the last incomplete line in the buffer
             stderrBuffer = lines.pop() || '';
-            // Add timestamps to complete lines
+            // Add lines (with optional timestamps)
             for (const line of lines) {
-                const timestamp = new Date().toISOString();
-                const timestampedLine = `[${timestamp}] ${line}\n`;
-                stderr += timestampedLine;
+                const outputLine = timestamps
+                    ? `[${new Date().toISOString()}] ${line}\n`
+                    : `${line}\n`;
+                stderr += outputLine;
                 // Also append to process manager for real-time monitoring
-                processManager.appendStderr(processId, timestampedLine);
+                processManager.appendStderr(processId, outputLine);
                 // Notify callback for multi-instance support
                 if (callbacks?.onStderr) {
                     try {
-                        callbacks.onStderr(processId, timestampedLine);
+                        callbacks.onStderr(processId, outputLine);
                     }
                     catch {
                         // Ignore callback errors for output streaming
@@ -158,14 +160,16 @@ export async function executeCommand(command, cwd, stdin, timeout, title, callba
             if (timeoutHandle)
                 clearTimeout(timeoutHandle);
             const duration = Date.now() - startTime;
-            // Flush any remaining buffered content with timestamps
+            // Flush any remaining buffered content (with optional timestamps)
             if (stdoutBuffer) {
-                const timestamp = new Date().toISOString();
-                stdout += `[${timestamp}] ${stdoutBuffer}\n`;
+                stdout += timestamps
+                    ? `[${new Date().toISOString()}] ${stdoutBuffer}\n`
+                    : `${stdoutBuffer}\n`;
             }
             if (stderrBuffer) {
-                const timestamp = new Date().toISOString();
-                stderr += `[${timestamp}] ${stderrBuffer}\n`;
+                stderr += timestamps
+                    ? `[${new Date().toISOString()}] ${stderrBuffer}\n`
+                    : `${stderrBuffer}\n`;
             }
             const result = {
                 stdout,

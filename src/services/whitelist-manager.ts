@@ -494,10 +494,13 @@ export class WhitelistManager {
   }
 
   /**
-   * List all whitelisted commands
+   * List whitelisted commands with optional pagination
    */
-  list(): {
+  list(limit?: number, offset?: number): {
     enabled: boolean;
+    total: number;
+    offset: number;
+    limit: number;
     commands: Array<{
       base: string;
       approvedAt: string;
@@ -506,15 +509,25 @@ export class WhitelistManager {
       blockedArgs?: string[];
     }>;
   } {
+    const allCommands = Object.entries(this.config.commands).map(([base, entry]) => ({
+      base,
+      approvedAt: entry.approvedAt,
+      description: entry.description,
+      allowedArgs: entry.allowedArgs,
+      blockedArgs: entry.blockedArgs,
+    }));
+
+    const total = allCommands.length;
+    const actualOffset = offset ?? 0;
+    const actualLimit = limit ?? 20; // Default to 20 for token efficiency
+    const paginatedCommands = allCommands.slice(actualOffset, actualOffset + actualLimit);
+
     return {
       enabled: this.config.enabled,
-      commands: Object.entries(this.config.commands).map(([base, entry]) => ({
-        base,
-        approvedAt: entry.approvedAt,
-        description: entry.description,
-        allowedArgs: entry.allowedArgs,
-        blockedArgs: entry.blockedArgs,
-      })),
+      total,
+      offset: actualOffset,
+      limit: actualLimit,
+      commands: paginatedCommands,
     };
   }
 

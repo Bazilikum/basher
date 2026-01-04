@@ -166,6 +166,7 @@ const executeCommandSchema = z.object({
   }).optional(),
   diffWithLast: z.boolean().optional().default(false),
   analyzeFailure: z.boolean().optional().default(true), // Auto-analyze failures
+  timestamps: z.boolean().optional().default(false), // Add per-line timestamps to output
 });
 
 const searchHistorySchema = z.object({
@@ -208,7 +209,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
     tools: [
       {
         name: 'execute_command',
-        description: 'PREFERRED TOOL FOR ALL COMMAND EXECUTION. Execute shell commands with comprehensive tracking and analysis: (1) Persistent SQLite history with full-text search across all past executions, (2) Per-line timestamps for precise debugging, (3) Process tracking with termination capabilities, (4) Token-efficient querying with 90-95% savings using summary/excerpts modes, (5) Advanced filtering and aggregation for pattern analysis, (6) Real-time web UI dashboard at localhost:3000. Every command execution is automatically saved and becomes searchable. Use this instead of standard bash for all command execution to ensure complete observability and the ability to search, compare, and analyze past runs. IMPORTANT: Do NOT use for sleep/wait commands with default background execution (they return immediately). For sleep/wait commands, set background=false or use waitFor parameter.',
+        description: 'Execute commands with history, search, and analysis. Runs in background by default.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -275,13 +276,17 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: 'boolean',
               description: 'Auto-analyze failures (default: true). Returns error type, suggestions, related commands.',
             },
+            timestamps: {
+              type: 'boolean',
+              description: 'Add per-line timestamps to output (default: false).',
+            },
           },
           required: ['command'],
         },
       },
       {
         name: 'search_command_history',
-        description: 'Search past command executions using full-text search. Searches across command text, stdout, and stderr. Returns matching commands with their complete execution details.',
+        description: 'Search command history with full-text search across command, stdout, stderr.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -303,7 +308,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'get_recent_commands',
-        description: 'Retrieve the most recent command executions from history. Returns commands in reverse chronological order with full execution details. Returns Toon format by default for ~40% token savings.',
+        description: 'Get recent command history. Returns Toon format by default.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -320,36 +325,42 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
-        name: 'get_command_by_id',
-        description: 'Retrieve a specific command execution by its ID from the history database. Returns complete execution details including stdout, stderr, exit code, duration, and metadata.',
+        name: 'get_command',
+        description: 'Get command details by ID or process ID.',
         inputSchema: {
           type: 'object',
           properties: {
-            commandId: {
-              type: 'number',
-              description: 'The ID of the command to retrieve',
-            },
+            commandId: { type: 'number', description: 'Command ID from history' },
+            processId: { type: 'number', description: 'Process ID from execute_command' },
+          },
+        },
+      },
+      // Deprecated tools kept for backwards compatibility
+      {
+        name: 'get_command_by_id',
+        description: '[DEPRECATED: use get_command] Get command by ID.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            commandId: { type: 'number', description: 'The ID of the command to retrieve' },
           },
           required: ['commandId'],
         },
       },
       {
         name: 'get_command_by_process_id',
-        description: 'Look up a completed command by its process ID. Use this to find the database ID and full details of a background command after it completes. The process ID is returned when you start a background command.',
+        description: '[DEPRECATED: use get_command] Get command by process ID.',
         inputSchema: {
           type: 'object',
           properties: {
-            processId: {
-              type: 'number',
-              description: 'The process ID that was returned when the command was started',
-            },
+            processId: { type: 'number', description: 'The process ID' },
           },
           required: ['processId'],
         },
       },
       {
         name: 'get_command_stats',
-        description: 'Get statistics about command execution history including total commands, failures, and average execution duration.',
+        description: 'Get execution stats: total commands, failures, success rate, avg duration.',
         inputSchema: {
           type: 'object',
           properties: {},
@@ -357,7 +368,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'get_version',
-        description: 'Get the current version of Basher MCP server including name, version number, and description.',
+        description: 'Get Basher version info.',
         inputSchema: {
           type: 'object',
           properties: {},
@@ -365,7 +376,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'get_server_info',
-        description: 'Get information about this Basher instance including Web UI URL/port, project directory, and server status. Useful to know where to access the web dashboard.',
+        description: 'Get server info: Web UI URL, project directory, uptime.',
         inputSchema: {
           type: 'object',
           properties: {},
@@ -373,7 +384,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'clear_history',
-        description: 'Clear all command history from the database. This permanently deletes all stored command executions and cannot be undone. Use with caution.',
+        description: 'Clear all command history. Permanent, cannot be undone.',
         inputSchema: {
           type: 'object',
           properties: {},
@@ -381,7 +392,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'terminate_command',
-        description: 'Terminate a running command by its process ID. Sends SIGTERM for graceful shutdown, followed by SIGKILL after 5 seconds if process is still running.',
+        description: 'Terminate a running command by process ID (SIGTERM, then SIGKILL).',
         inputSchema: {
           type: 'object',
           properties: {
@@ -395,7 +406,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'get_running_commands',
-        description: 'Get a list of all currently running commands with their process IDs, command text, and duration.',
+        description: 'List all currently running commands with processId and duration.',
         inputSchema: {
           type: 'object',
           properties: {},
@@ -403,7 +414,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'get_process_output',
-        description: 'Get the current output (stdout/stderr) from a running command by process ID. Essential for monitoring long-running commands and allowing AI self-monitoring. Returns the last N lines if specified, or all output. Use this to check progress of builds, tests, or any long-running process.',
+        description: 'Get stdout/stderr from a running command. Optionally limit to last N lines.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -421,7 +432,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'poll_until_complete',
-        description: 'Wait for a background command to complete and return the final result. This is MORE EFFICIENT than repeatedly calling get_process_output because polling happens server-side without consuming your context. Use this instead of manual polling loops.',
+        description: 'Wait for background command to complete. More efficient than manual polling.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -443,7 +454,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'advanced_search',
-        description: 'Search command history with advanced filtering and tiered output levels for token efficiency. Use outputLevel to control response size: "summary" (90% token savings), "preview" (first/last lines), "excerpts" (matching lines only), or "full" (complete output). Supports Toon format for additional ~40% savings.',
+        description: 'Advanced search with filters and output levels (summary/preview/excerpts/full).',
         inputSchema: {
           type: 'object',
           properties: {
@@ -495,7 +506,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'get_aggregations',
-        description: 'Get aggregated statistics grouped by command, directory, exit code, or time. Returns counts, averages, and success rates in a single query - much more token-efficient than multiple searches.',
+        description: 'Aggregate stats grouped by command, cwd, exitCode, or time.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -522,7 +533,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'compare_executions',
-        description: 'Compare output differences between two command executions. Shows added, removed, and common lines for both stdout and stderr.',
+        description: 'Compare stdout/stderr diff between two commands.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -540,7 +551,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'get_last_failures',
-        description: 'Quick access to recent failed commands. Token-efficient alternative to searching with exitCode filter.',
+        description: 'Get recent failed commands (non-zero exit codes).',
         inputSchema: {
           type: 'object',
           properties: {
@@ -562,7 +573,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'get_similar_commands',
-        description: 'Find commands similar to a given command (same base command and working directory). Useful for tracking patterns and history.',
+        description: 'Find similar commands (same base command and cwd).',
         inputSchema: {
           type: 'object',
           properties: {
@@ -585,7 +596,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'get_command_chain',
-        description: 'Get a sequence of commands executed in the same working directory around a specific command. Useful for understanding command context and workflows.',
+        description: 'Get command sequence around a specific command in same cwd.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -609,7 +620,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       // Template tools
       {
         name: 'save_template',
-        description: 'Save a reusable command template. Templates store command configurations for quick re-execution.',
+        description: 'Save a reusable command template for quick re-execution.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -630,7 +641,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'run_template',
-        description: 'Run a saved command template by name. Much faster than re-specifying all options.',
+        description: 'Run a saved template by name.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -650,7 +661,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'list_templates',
-        description: 'List all saved command templates, optionally filtered by tag.',
+        description: 'List saved templates, optionally filtered by tag.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -672,7 +683,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       // Session tools
       {
         name: 'start_session',
-        description: 'Start a new command session. All subsequent commands are grouped under this session for organization.',
+        description: 'Start a session to group related commands.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -719,15 +730,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       // ========================================================================
       {
         name: 'whitelist_command',
-        description: `Add a command to the whitelist, allowing it to be executed.
-
-⚠️ CRITICAL: You MUST get explicit user approval before calling this tool!
-
-Before whitelisting any command, you MUST ask the user:
-"May I whitelist the '{command_base}' command to allow this operation?"
-
-Only proceed with this tool call AFTER the user explicitly approves.
-Never call this tool proactively without user consent.`,
+        description: 'Add command to whitelist. CRITICAL: Get user approval first!',
         inputSchema: {
           type: 'object',
           properties: {
@@ -745,15 +748,18 @@ Never call this tool proactively without user consent.`,
       },
       {
         name: 'list_whitelisted_commands',
-        description: 'List all currently whitelisted commands that are allowed to execute.',
+        description: 'List all whitelisted commands.',
         inputSchema: {
           type: 'object',
-          properties: {},
+          properties: {
+            limit: { type: 'number', description: 'Max commands to return (default: 20)' },
+            offset: { type: 'number', description: 'Skip first N commands (default: 0)' },
+          },
         },
       },
       {
         name: 'remove_whitelisted_command',
-        description: 'Remove a command from the whitelist. After removal, that command will be blocked from execution until re-whitelisted.',
+        description: 'Remove command from whitelist.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -779,7 +785,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const params = executeCommandSchema.parse(args);
       const {
         command, cwd, stdin, timeout, background, title, waitFor, waitTimeout,
-        parseAs, outputMode, trackProgress: doTrackProgress, retry, diffWithLast, analyzeFailure: doAnalyzeFailure
+        parseAs, outputMode, trackProgress: doTrackProgress, retry, diffWithLast, analyzeFailure: doAnalyzeFailure, timestamps
       } = params;
 
       // ========================================================================
@@ -1034,7 +1040,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
 
         // Start command execution (don't await - we want to monitor as it runs)
-        const commandPromise = executeCommand(command, cwd, stdin, timeout, title, callbacks);
+        const commandPromise = executeCommand(command, cwd, stdin, timeout, title, callbacks, timestamps);
 
         // Set up completion handler
         commandPromise.then(result => {
@@ -1179,7 +1185,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
 
         // Execute in background (don't await)
-        executeCommand(command, cwd, stdin, timeout, title, callbacks)
+        executeCommand(command, cwd, stdin, timeout, title, callbacks, timestamps)
           .then(updateOnComplete)
           .catch(error => {
             logger.error({ error, command }, 'Background command failed');
@@ -1279,7 +1285,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         },
       };
 
-      const result = await executeCommand(command, cwd, stdin, timeout, title, callbacks);
+      const result = await executeCommand(command, cwd, stdin, timeout, title, callbacks, timestamps);
       const commandId = updateOnComplete(result);
 
       // Use enhanced result with new features
@@ -1633,7 +1639,62 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       };
     }
 
-    // Get command by ID
+    // Get command (consolidated - accepts either commandId or processId)
+    if (name === 'get_command') {
+      const params = z.object({
+        commandId: z.number().optional(),
+        processId: z.number().optional(),
+      }).parse(args);
+
+      let command;
+      if (params.commandId !== undefined) {
+        logger.info({ commandId: params.commandId }, 'Getting command by ID');
+        command = historyManager.getCommandById(params.commandId);
+      } else if (params.processId !== undefined) {
+        logger.info({ processId: params.processId }, 'Getting command by process ID');
+        command = historyManager.getCommandByProcessId(params.processId);
+      } else {
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({ error: 'Either commandId or processId must be provided' }, null, 2),
+          }],
+        };
+      }
+
+      if (!command) {
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              error: 'Command not found',
+              ...(params.commandId !== undefined ? { commandId: params.commandId } : { processId: params.processId }),
+            }, null, 2),
+          }],
+        };
+      }
+
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            id: command.id,
+            processId: command.processId,
+            command: command.command,
+            title: command.title,
+            cwd: command.cwd,
+            timestamp: command.timestamp,
+            exitCode: command.exitCode,
+            duration: `${command.duration}ms`,
+            status: command.status,
+            stdout: command.stdout,
+            stderr: command.stderr,
+          }, null, 2),
+        }],
+      };
+    }
+
+    // Get command by ID (deprecated - use get_command)
     if (name === 'get_command_by_id') {
       const params = z.object({ commandId: z.number() }).parse(args);
       const { commandId } = params;

@@ -149,7 +149,7 @@ async function handleListSessions(
 export const sessionTools: ToolDefinition[] = [
   {
     name: 'start_session',
-    description: 'Start a new command session. All subsequent commands are grouped under this session for organization.',
+    description: 'Start a session to group related commands.',
     inputSchema: {
       type: 'object',
       properties: {

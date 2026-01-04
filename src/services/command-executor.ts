@@ -30,7 +30,8 @@ export async function executeCommand(
   stdin?: string,
   timeout?: number,
   title?: string,
-  callbacks?: CommandExecutionCallbacks
+  callbacks?: CommandExecutionCallbacks,
+  timestamps: boolean = false
 ): Promise<CommandResult & { processId: number }> {
   return new Promise((resolve, reject) => {
     const startTime = Date.now();
@@ -109,19 +110,20 @@ export async function executeCommand(
       // Keep the last incomplete line in the buffer
       stdoutBuffer = lines.pop() || '';
 
-      // Add timestamps to complete lines
+      // Add lines (with optional timestamps)
       for (const line of lines) {
-        const timestamp = new Date().toISOString();
-        const timestampedLine = `[${timestamp}] ${line}\n`;
-        stdout += timestampedLine;
+        const outputLine = timestamps
+          ? `[${new Date().toISOString()}] ${line}\n`
+          : `${line}\n`;
+        stdout += outputLine;
 
         // Also append to process manager for real-time monitoring
-        processManager.appendStdout(processId, timestampedLine);
+        processManager.appendStdout(processId, outputLine);
 
         // Notify callback for multi-instance support
         if (callbacks?.onStdout) {
           try {
-            callbacks.onStdout(processId, timestampedLine);
+            callbacks.onStdout(processId, outputLine);
           } catch {
             // Ignore callback errors for output streaming
           }
@@ -143,19 +145,20 @@ export async function executeCommand(
       // Keep the last incomplete line in the buffer
       stderrBuffer = lines.pop() || '';
 
-      // Add timestamps to complete lines
+      // Add lines (with optional timestamps)
       for (const line of lines) {
-        const timestamp = new Date().toISOString();
-        const timestampedLine = `[${timestamp}] ${line}\n`;
-        stderr += timestampedLine;
+        const outputLine = timestamps
+          ? `[${new Date().toISOString()}] ${line}\n`
+          : `${line}\n`;
+        stderr += outputLine;
 
         // Also append to process manager for real-time monitoring
-        processManager.appendStderr(processId, timestampedLine);
+        processManager.appendStderr(processId, outputLine);
 
         // Notify callback for multi-instance support
         if (callbacks?.onStderr) {
           try {
-            callbacks.onStderr(processId, timestampedLine);
+            callbacks.onStderr(processId, outputLine);
           } catch {
             // Ignore callback errors for output streaming
           }
@@ -196,14 +199,16 @@ export async function executeCommand(
       if (timeoutHandle) clearTimeout(timeoutHandle);
       const duration = Date.now() - startTime;
 
-      // Flush any remaining buffered content with timestamps
+      // Flush any remaining buffered content (with optional timestamps)
       if (stdoutBuffer) {
-        const timestamp = new Date().toISOString();
-        stdout += `[${timestamp}] ${stdoutBuffer}\n`;
+        stdout += timestamps
+          ? `[${new Date().toISOString()}] ${stdoutBuffer}\n`
+          : `${stdoutBuffer}\n`;
       }
       if (stderrBuffer) {
-        const timestamp = new Date().toISOString();
-        stderr += `[${timestamp}] ${stderrBuffer}\n`;
+        stderr += timestamps
+          ? `[${new Date().toISOString()}] ${stderrBuffer}\n`
+          : `${stderrBuffer}\n`;
       }
 
       const result: CommandResult & { processId: number } = {

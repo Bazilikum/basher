@@ -114,7 +114,7 @@ async function handleDeleteTemplate(
 export const templateTools: ToolDefinition[] = [
   {
     name: 'save_template',
-    description: 'Save a reusable command template. Templates store command configurations for quick re-execution.',
+    description: 'Save a reusable command template for quick re-execution.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -136,7 +136,7 @@ export const templateTools: ToolDefinition[] = [
   },
   {
     name: 'list_templates',
-    description: 'List all saved command templates, optionally filtered by tag.',
+    description: 'List saved templates, optionally filtered by tag.',
     inputSchema: {
       type: 'object',
       properties: {

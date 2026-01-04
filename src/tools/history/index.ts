@@ -159,60 +159,40 @@ async function handleGetRecentCommands(
   };
 }
 
+// Schema for get_command - supports both commandId and processId
+const getCommandSchema = z.object({
+  commandId: z.number().optional(),
+  processId: z.number().optional(),
+}).refine(data => data.commandId !== undefined || data.processId !== undefined, {
+  message: 'Either commandId or processId must be provided',
+});
+
 /**
- * Get command by ID handler
+ * Get command by ID or process ID handler (consolidated)
  */
-async function handleGetCommandById(
+async function handleGetCommand(
   args: unknown,
   context: ToolContext
 ): Promise<ToolResult> {
-  const params = z.object({ commandId: z.number() }).parse(args);
-  const { commandId } = params;
+  const params = getCommandSchema.parse(args);
+  const { commandId, processId } = params;
 
-  logger.info({ commandId }, 'Getting command by ID');
-
-  const command = context.historyManager.getCommandById(commandId);
-
-  if (!command) {
-    return createToolResult({
-      error: 'Command not found',
-      commandId,
-      message: 'No command exists with this ID. Use get_recent_commands or search_command_history to find available commands.',
-    });
+  let command;
+  if (commandId !== undefined) {
+    logger.info({ commandId }, 'Getting command by ID');
+    command = context.historyManager.getCommandById(commandId);
+  } else {
+    logger.info({ processId }, 'Getting command by process ID');
+    command = context.historyManager.getCommandByProcessId(processId!);
   }
 
-  return createToolResult({
-    id: command.id,
-    command: command.command,
-    title: command.title,
-    cwd: command.cwd,
-    timestamp: command.timestamp,
-    exitCode: command.exitCode,
-    duration: `${command.duration}ms`,
-    stdout: command.stdout,
-    stderr: command.stderr,
-  });
-}
-
-/**
- * Get command by process ID handler
- */
-async function handleGetCommandByProcessId(
-  args: unknown,
-  context: ToolContext
-): Promise<ToolResult> {
-  const params = z.object({ processId: z.number() }).parse(args);
-  const { processId } = params;
-
-  logger.info({ processId }, 'Getting command by process ID');
-
-  const command = context.historyManager.getCommandByProcessId(processId);
-
   if (!command) {
     return createToolResult({
       error: 'Command not found',
-      processId,
-      message: 'No command found with this process ID. The process may still be running or was never started.',
+      ...(commandId !== undefined ? { commandId } : { processId }),
+      message: commandId !== undefined
+        ? 'No command exists with this ID.'
+        : 'No command found with this process ID.',
     });
   }
 
@@ -229,6 +209,30 @@ async function handleGetCommandByProcessId(
     stdout: command.stdout,
     stderr: command.stderr,
   });
+}
+
+/**
+ * @deprecated Use handleGetCommand instead
+ */
+async function handleGetCommandById(
+  args: unknown,
+  context: ToolContext
+): Promise<ToolResult> {
+  logger.warn('get_command_by_id is deprecated, use get_command instead');
+  const params = z.object({ commandId: z.number() }).parse(args);
+  return handleGetCommand({ commandId: params.commandId }, context);
+}
+
+/**
+ * @deprecated Use handleGetCommand instead
+ */
+async function handleGetCommandByProcessId(
+  args: unknown,
+  context: ToolContext
+): Promise<ToolResult> {
+  logger.warn('get_command_by_process_id is deprecated, use get_command instead');
+  const params = z.object({ processId: z.number() }).parse(args);
+  return handleGetCommand({ processId: params.processId }, context);
 }
 
 /**
@@ -415,7 +419,7 @@ async function handleCompareExecutions(
 export const historyTools: ToolDefinition[] = [
   {
     name: 'search_command_history',
-    description: 'Search past command executions using full-text search. Searches across command text, stdout, and stderr. Returns matching commands with their complete execution details.',
+    description: 'Search command history with full-text search across command, stdout, stderr.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -429,7 +433,7 @@ export const historyTools: ToolDefinition[] = [
   },
   {
     name: 'get_recent_commands',
-    description: 'Retrieve the most recent command executions from history. Returns commands in reverse chronological order with full execution details. Returns Toon format by default for ~40% token savings.',
+    description: 'Get recent command history. Returns Toon format by default.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -439,9 +443,23 @@ export const historyTools: ToolDefinition[] = [
     },
     handler: handleGetRecentCommands,
   },
+  // New consolidated tool
+  {
+    name: 'get_command',
+    description: 'Get command details by ID or process ID.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        commandId: { type: 'number', description: 'Command ID from history' },
+        processId: { type: 'number', description: 'Process ID from execute_command' },
+      },
+    },
+    handler: handleGetCommand,
+  },
+  // Deprecated - kept for backwards compatibility
   {
     name: 'get_command_by_id',
-    description: 'Retrieve a specific command execution by its ID from the history database. Returns complete execution details including stdout, stderr, exit code, duration, and metadata.',
+    description: '[DEPRECATED: use get_command] Get command by ID.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -453,11 +471,11 @@ export const historyTools: ToolDefinition[] = [
   },
   {
     name: 'get_command_by_process_id',
-    description: 'Look up a completed command by its process ID. Use this to find the database ID and full details of a background command after it completes.',
+    description: '[DEPRECATED: use get_command] Get command by process ID.',
     inputSchema: {
       type: 'object',
       properties: {
-        processId: { type: 'number', description: 'The process ID that was returned when the command was started' },
+        processId: { type: 'number', description: 'The process ID' },
       },
       required: ['processId'],
     },
@@ -465,7 +483,7 @@ export const historyTools: ToolDefinition[] = [
   },
   {
     name: 'get_command_stats',
-    description: 'Get statistics about command execution history including total commands, failures, and average execution duration.',
+    description: 'Get execution stats: total commands, failures, success rate, avg duration.',
     inputSchema: {
       type: 'object',
       properties: {},
@@ -474,7 +492,7 @@ export const historyTools: ToolDefinition[] = [
   },
   {
     name: 'advanced_search',
-    description: 'Search command history with advanced filtering and tiered output levels for token efficiency. Use outputLevel to control response size.',
+    description: 'Advanced search with filters and output levels (summary/preview/excerpts/full).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -491,7 +509,7 @@ export const historyTools: ToolDefinition[] = [
   },
   {
     name: 'get_aggregations',
-    description: 'Get aggregated statistics grouped by command, directory, exit code, or time.',
+    description: 'Aggregate stats grouped by command, cwd, exitCode, or time.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -506,7 +524,7 @@ export const historyTools: ToolDefinition[] = [
   },
   {
     name: 'get_last_failures',
-    description: 'Quick access to recent failed commands. Token-efficient alternative to searching with exitCode filter.',
+    description: 'Get recent failed commands (non-zero exit codes).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -519,7 +537,7 @@ export const historyTools: ToolDefinition[] = [
   },
   {
     name: 'get_similar_commands',
-    description: 'Find commands similar to a given command (same base command and working directory).',
+    description: 'Find similar commands (same base command and cwd).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -533,7 +551,7 @@ export const historyTools: ToolDefinition[] = [
   },
   {
     name: 'get_command_chain',
-    description: 'Get a sequence of commands executed in the same working directory around a specific command.',
+    description: 'Get command sequence around a specific command in same cwd.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -547,7 +565,7 @@ export const historyTools: ToolDefinition[] = [
   },
   {
     name: 'compare_executions',
-    description: 'Compare output differences between two command executions.',
+    description: 'Compare stdout/stderr diff between two commands.',
     inputSchema: {
       type: 'object',
       properties: {
