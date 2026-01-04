@@ -5,6 +5,24 @@ All notable changes to Basher will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.18.0] - 2026-01-04
+
+### Added
+- **Basher Light**: Minimal MCP server with 5 essential tools (~80% fewer tokens)
+  - Tools: `execute_command`, `get_command`, `get_running_commands`, `terminate_command`, `get_version`
+  - Available via `basher-light` binary or `npm run start:light`
+- **Consolidated `get_command` tool**: Unified lookup by `commandId` or `processId`
+- **`timestamps` parameter** for `execute_command`: Per-line timestamps (default: false)
+- **Whitelist pagination**: `limit`/`offset` params for `list_whitelisted_commands`
+
+### Changed
+- **Shortened tool descriptions**: ~30% reduction in tool definition tokens
+- **Timestamps off by default**: Now opt-in via `timestamps: true` for reduced output size
+
+### Deprecated
+- `get_command_by_id` → Use `get_command` with `commandId` param
+- `get_command_by_process_id` → Use `get_command` with `processId` param
+
 ## [1.17.0] - 2025-12-20
 
 ### Added

@@ -76,7 +76,7 @@ async function handleClearHistory(_args, context) {
 export const adminTools = [
     {
         name: 'get_version',
-        description: 'Get the current version of Basher MCP server including name, version number, and description.',
+        description: 'Get Basher version info.',
         inputSchema: {
             type: 'object',
             properties: {},
@@ -85,7 +85,7 @@ export const adminTools = [
     },
     {
         name: 'get_server_info',
-        description: 'Get information about this Basher instance including Web UI URL/port, project directory, and server status. Useful to know where to access the web dashboard.',
+        description: 'Get server info: Web UI URL, project directory, uptime.',
         inputSchema: {
             type: 'object',
             properties: {},
@@ -94,7 +94,7 @@ export const adminTools = [
     },
     {
         name: 'clear_history',
-        description: 'Clear all command history from the database. This permanently deletes all stored command executions and cannot be undone. Use with caution.',
+        description: 'Clear all command history. Permanent, cannot be undone.',
         inputSchema: {
             type: 'object',
             properties: {},

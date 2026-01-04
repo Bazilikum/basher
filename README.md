@@ -32,6 +32,8 @@ MCP server for executing shell commands with enhanced logging, history tracking,
 - **Output Diff** (v1.8.0): Auto-compare output with previous runs of the same command
 - **Command Whitelisting** (v1.10.0): Security defense-in-depth requiring explicit approval for command bases
 - **Security Hardening** (v1.9.0): Localhost-only binding, rate limiting, CORS restrictions, Helmet headers
+- **Context Optimization** (v1.18.0): Reduced tool definitions by ~30%, timestamps now opt-in, paginated whitelist
+- **Basher Light Mode** (v1.18.0): Minimal 5-tool version for ~80% fewer tokens in tool definitions
 
 ## Platform Support
 
@@ -67,6 +69,29 @@ claude mcp list
 ```
 
 You should see `basher` in the list of configured servers.
+
+### Basher Light (Minimal Mode)
+
+For maximum context efficiency, use Basher Light with only 5 essential tools (~80% fewer tokens in definitions):
+
+```bash
+claude mcp add --transport stdio basher-light -- npx -y github:Bazilikum/basher/dist/index-light.js --project "$(pwd)"
+```
+
+**Basher Light includes:**
+- `execute_command` - Run commands with history
+- `get_command` - Look up results by ID or processId
+- `get_running_commands` - List running commands
+- `terminate_command` - Stop a running command
+- `get_version` - Version info
+
+**When to use Light vs Full:**
+| Use Case | Recommendation |
+|----------|----------------|
+| Simple command execution | Basher Light |
+| Need history search/analytics | Full Basher |
+| Context-constrained environments | Basher Light |
+| Complex workflows with sessions | Full Basher |
 
 ### Manual Installation (For Development)
 
@@ -529,8 +554,9 @@ Execute a shell command with enhanced logging and automatic history tracking.
 - `timeout` (number, optional): Timeout in milliseconds (no timeout by default)
 - `background` (boolean, optional): Run in background (default: true). Set to false for synchronous execution
 - `title` (string, optional): Human-readable title for the command
-- `waitFor` (string, optional): **NEW in v1.7** - Regex pattern to wait for in output. Returns immediately when pattern matches. Use this instead of polling!
+- `waitFor` (string, optional): Regex pattern to wait for in output. Returns immediately when pattern matches. Use this instead of polling!
 - `waitTimeout` (number, optional): Timeout for waitFor in ms (default: 30000)
+- `timestamps` (boolean, optional): **NEW in v1.18** - Add per-line timestamps to output (default: false). Enable for debugging timing issues.
 
 **Execution Modes:**
 
@@ -817,18 +843,23 @@ Get statistics about command execution history.
 }
 ```
 
-### 5. get_command_by_id
+### 5. get_command (v1.18.0)
 
-Retrieve a specific command execution by its ID from the history database. Returns complete execution details including stdout, stderr, exit code, duration, and metadata.
+Retrieve a command by either its database ID or process ID. Consolidates the previous `get_command_by_id` and `get_command_by_process_id` tools.
 
 **Parameters:**
-- `commandId` (number, required): The ID of the command to retrieve
+- `commandId` (number, optional): The database ID of the command
+- `processId` (number, optional): The process ID returned by execute_command
+
+*One of `commandId` or `processId` must be provided.*
 
 **Example:**
 ```typescript
-{
-  "commandId": 42
-}
+// By database ID
+{ "commandId": 42 }
+
+// By process ID
+{ "processId": 12345 }
 ```
 
 **Returns:**

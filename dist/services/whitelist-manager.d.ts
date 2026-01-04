@@ -115,10 +115,13 @@ export declare class WhitelistManager {
         message: string;
     };
     /**
-     * List all whitelisted commands
+     * List whitelisted commands with optional pagination
      */
-    list(): {
+    list(limit?: number, offset?: number): {
         enabled: boolean;
+        total: number;
+        offset: number;
+        limit: number;
         commands: Array<{
             base: string;
             approvedAt: string;

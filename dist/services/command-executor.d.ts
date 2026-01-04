@@ -18,6 +18,6 @@ export interface CommandExecutionCallbacks {
  * Returns both the command result and the process ID for tracking
  * @param callbacks Optional callbacks for real-time event notifications
  */
-export declare function executeCommand(command: string, cwd?: string, stdin?: string, timeout?: number, title?: string, callbacks?: CommandExecutionCallbacks): Promise<CommandResult & {
+export declare function executeCommand(command: string, cwd?: string, stdin?: string, timeout?: number, title?: string, callbacks?: CommandExecutionCallbacks, timestamps?: boolean): Promise<CommandResult & {
     processId: number;
 }>;

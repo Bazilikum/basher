@@ -249,7 +249,7 @@ async function handlePollUntilComplete(
 export const executeTools: ToolDefinition[] = [
   {
     name: 'terminate_command',
-    description: 'Terminate a running command by its process ID. Sends SIGTERM for graceful shutdown, followed by SIGKILL after 5 seconds if process is still running.',
+    description: 'Terminate a running command by process ID (SIGTERM, then SIGKILL).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -264,7 +264,7 @@ export const executeTools: ToolDefinition[] = [
   },
   {
     name: 'get_running_commands',
-    description: 'Get a list of all currently running commands with their process IDs, command text, and duration.',
+    description: 'List all currently running commands with processId and duration.',
     inputSchema: {
       type: 'object',
       properties: {},
@@ -273,7 +273,7 @@ export const executeTools: ToolDefinition[] = [
   },
   {
     name: 'get_process_output',
-    description: 'Get the current output (stdout/stderr) from a running command by process ID. Essential for monitoring long-running commands and allowing AI self-monitoring. Returns the last N lines if specified, or all output. Use this to check progress of builds, tests, or any long-running process.',
+    description: 'Get stdout/stderr from a running command. Optionally limit to last N lines.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -292,7 +292,7 @@ export const executeTools: ToolDefinition[] = [
   },
   {
     name: 'poll_until_complete',
-    description: 'Wait for a background command to complete and return the final result. This is MORE EFFICIENT than repeatedly calling get_process_output because polling happens server-side without consuming your context. Use this instead of manual polling loops.',
+    description: 'Wait for background command to complete. More efficient than manual polling.',
     inputSchema: {
       type: 'object',
       properties: {

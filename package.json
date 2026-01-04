@@ -1,16 +1,19 @@
 {
   "name": "basher",
-  "version": "1.17.0",
+  "version": "1.18.0",
   "description": "Basher - MCP server for executing commands with enhanced logging, history tracking, and improved visibility",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "basher": "dist/index.js"
+    "basher": "dist/index.js",
+    "basher-light": "dist/index-light.js"
   },
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
+    "start:light": "node dist/index-light.js",
     "dev": "tsx src/index.ts",
+    "dev:light": "tsx src/index-light.ts",
     "watch": "tsc --watch",
     "lint": "eslint src/",
     "lint:fix": "eslint src/ --fix",

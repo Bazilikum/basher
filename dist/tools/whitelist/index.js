@@ -33,14 +33,23 @@ async function handleWhitelistCommand(args, _context) {
         whitelistPath: whitelistManager.getConfigPath(),
     });
 }
+// Schema for list whitelisted commands
+const listWhitelistedSchema = z.object({
+    limit: z.number().positive().optional().default(20),
+    offset: z.number().min(0).optional().default(0),
+});
 /**
  * List whitelisted commands handler
  */
-async function handleListWhitelistedCommands(_args, _context) {
-    logger.info('Listing whitelisted commands');
-    const whitelist = whitelistManager.list();
+async function handleListWhitelistedCommands(args, _context) {
+    const params = listWhitelistedSchema.parse(args);
+    logger.info({ limit: params.limit, offset: params.offset }, 'Listing whitelisted commands');
+    const whitelist = whitelistManager.list(params.limit, params.offset);
     return createToolResult({
         enabled: whitelist.enabled,
+        total: whitelist.total,
+        offset: whitelist.offset,
+        limit: whitelist.limit,
         count: whitelist.commands.length,
         commands: whitelist.commands,
         configPath: whitelistManager.getConfigPath(),
@@ -66,15 +75,7 @@ async function handleRemoveWhitelistedCommand(args, _context) {
 export const whitelistTools = [
     {
         name: 'whitelist_command',
-        description: `Add a command to the whitelist, allowing it to be executed.
-
-⚠️ CRITICAL: You MUST get explicit user approval before calling this tool!
-
-Before whitelisting any command, you MUST ask the user:
-"May I whitelist the '{command_base}' command to allow this operation?"
-
-Only proceed with this tool call AFTER the user explicitly approves.
-Never call this tool proactively without user consent.`,
+        description: 'Add command to whitelist. CRITICAL: Get user approval first!',
         inputSchema: {
             type: 'object',
             properties: {
@@ -93,16 +94,19 @@ Never call this tool proactively without user consent.`,
     },
     {
         name: 'list_whitelisted_commands',
-        description: 'List all currently whitelisted commands that are allowed to execute.',
+        description: 'List all whitelisted commands.',
         inputSchema: {
             type: 'object',
-            properties: {},
+            properties: {
+                limit: { type: 'number', description: 'Max commands to return (default: 20)' },
+                offset: { type: 'number', description: 'Skip first N commands (default: 0)' },
+            },
         },
         handler: handleListWhitelistedCommands,
     },
     {
         name: 'remove_whitelisted_command',
-        description: 'Remove a command from the whitelist. After removal, that command will be blocked from execution until re-whitelisted.',
+        description: 'Remove command from whitelist.',
         inputSchema: {
             type: 'object',
             properties: {
