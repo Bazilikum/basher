@@ -4,6 +4,10 @@
   "description": "Enhanced command execution dashboard integrated into VS Code",
   "version": "1.8.0",
   "publisher": "bazilikum",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Bazilikum/basher.git"
+  },
   "engines": {
     "vscode": "^1.85.0"
   },
