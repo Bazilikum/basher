@@ -27,6 +27,27 @@ import { whitelistManager } from './services/whitelist-manager.js';
 // Read package.json for version info
 const packageJsonPath = join(dirname(fileURLToPath(import.meta.url)), '..', 'package.json');
 const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf-8'));
+/**
+ * Get process manager from context or singleton
+ */
+function getProcessManager(context) {
+    // For testing, we'd pass processManager in context
+    // For runtime, use the singleton
+    if (context?.processManager) {
+        return context.processManager;
+    }
+    // Return a singleton wrapper
+    return processManager;
+}
+/**
+ * Get whitelist manager from context or singleton
+ */
+function getWhitelistManager(context) {
+    if (context?.whitelistManager) {
+        return context.whitelistManager;
+    }
+    return whitelistManager;
+}
 // Determine project path
 function determineProjectPath() {
     const argIndex = process.argv.indexOf('--project');
@@ -65,6 +86,152 @@ const executeCommandSchema = z.object({
     title: z.string().optional(),
     timestamps: z.boolean().optional().default(false),
 });
+/**
+ * Format response as JSON string (light version response format)
+ */
+function jsonResponse(data) {
+    return {
+        content: [{ type: 'text', text: JSON.stringify(data, null, 2) }],
+    };
+}
+/**
+ * Execute command handler
+ */
+export async function handleExecuteCommand(args, context) {
+    const params = executeCommandSchema.parse(args);
+    const { command, cwd, timeout, background, title, timestamps } = params;
+    const wlManager = getWhitelistManager(context);
+    const pm = getProcessManager(context);
+    // Whitelist check
+    const whitelistCheck = wlManager.check(command);
+    if (!whitelistCheck.allowed) {
+        return jsonResponse({
+            status: 'blocked',
+            error: 'COMMAND_NOT_WHITELISTED',
+            commandBase: whitelistCheck.commandBase,
+            message: whitelistCheck.reason,
+        });
+    }
+    let capturedProcessId = null;
+    let capturedDatabaseId = null;
+    const callbacks = {
+        onStart: (processId, cmd, cmdTitle, cmdCwd) => {
+            capturedProcessId = processId;
+            const historyEntry = {
+                command: cmd,
+                title: cmdTitle,
+                cwd: cmdCwd,
+                timestamp: new Date().toISOString(),
+                exitCode: -1,
+                duration: 0,
+                stdout: '',
+                stderr: '',
+                processId,
+                status: 'running',
+            };
+            capturedDatabaseId = context.historyManager.saveCommand(historyEntry);
+            pm.setDatabaseId(processId, capturedDatabaseId);
+        },
+    };
+    const updateOnComplete = (result) => {
+        if (capturedDatabaseId) {
+            context.historyManager.updateStatus(capturedDatabaseId, 'completed', result.exitCode, result.duration, result.stdout, result.stderr);
+        }
+        pm.unregister(result.processId);
+        return capturedDatabaseId;
+    };
+    if (background) {
+        executeCommand(command, cwd, undefined, timeout, title, callbacks, timestamps)
+            .then(updateOnComplete)
+            .catch(error => logger.error({ error }, 'Background command failed'));
+        // Wait for processId
+        await new Promise(resolve => setTimeout(resolve, 50));
+        return jsonResponse({
+            status: 'started',
+            processId: capturedProcessId,
+            id: capturedDatabaseId,
+            command,
+            background: true,
+        });
+    }
+    // Synchronous execution
+    const result = await executeCommand(command, cwd, undefined, timeout, title, callbacks, timestamps);
+    const commandId = updateOnComplete(result);
+    return jsonResponse({
+        status: 'completed',
+        id: commandId,
+        processId: result.processId,
+        exitCode: result.exitCode,
+        duration: `${result.duration}ms`,
+        stdout: result.stdout,
+        stderr: result.stderr,
+    });
+}
+/**
+ * Get command handler (by ID or processId)
+ */
+export async function handleGetCommand(args, context) {
+    const params = z.object({
+        commandId: z.number().optional(),
+        processId: z.number().optional(),
+    }).parse(args);
+    let command;
+    if (params.commandId !== undefined) {
+        command = context.historyManager.getCommandById(params.commandId);
+    }
+    else if (params.processId !== undefined) {
+        command = context.historyManager.getCommandByProcessId(params.processId);
+    }
+    else {
+        return jsonResponse({ error: 'Either commandId or processId required' });
+    }
+    if (!command) {
+        return jsonResponse({ error: 'Command not found' });
+    }
+    return jsonResponse({
+        id: command.id,
+        processId: command.processId,
+        command: command.command,
+        exitCode: command.exitCode,
+        duration: `${command.duration}ms`,
+        stdout: command.stdout,
+        stderr: command.stderr,
+    });
+}
+/**
+ * Get running commands handler
+ */
+export async function handleGetRunningCommands(context) {
+    const pm = getProcessManager(context);
+    const running = pm.getRunning();
+    return jsonResponse({
+        count: running.length,
+        running: running.map((r) => ({ ...r, duration: `${r.duration}ms` })),
+    });
+}
+/**
+ * Terminate command handler
+ */
+export async function handleTerminateCommand(args, context) {
+    const params = z.object({ processId: z.number() }).parse(args);
+    const pm = getProcessManager(context);
+    const success = pm.kill(params.processId);
+    return jsonResponse({
+        processId: params.processId,
+        success,
+        message: success ? 'Process terminated' : 'Process not found',
+    });
+}
+/**
+ * Get version handler
+ */
+export async function handleGetVersion(context) {
+    return jsonResponse({
+        name: 'basher-light',
+        version: context.version,
+        description: 'Minimal Basher with 5 essential tools',
+    });
+}
 // Create MCP server
 const server = new Server({ name: 'basher-light', version: packageJson.version }, { capabilities: { tools: {} } });
 // List available tools (minimal set)
@@ -126,176 +293,25 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
     try {
-        // Execute command
-        if (name === 'execute_command') {
-            const params = executeCommandSchema.parse(args);
-            const { command, cwd, timeout, background, title, timestamps } = params;
-            // Whitelist check
-            const whitelistCheck = whitelistManager.check(command);
-            if (!whitelistCheck.allowed) {
-                return {
-                    content: [{
-                            type: 'text',
-                            text: JSON.stringify({
-                                status: 'blocked',
-                                error: 'COMMAND_NOT_WHITELISTED',
-                                commandBase: whitelistCheck.commandBase,
-                                message: whitelistCheck.reason,
-                            }, null, 2),
-                        }],
-                };
-            }
-            let capturedProcessId = null;
-            let capturedDatabaseId = null;
-            const callbacks = {
-                onStart: (processId, cmd, cmdTitle, cmdCwd) => {
-                    capturedProcessId = processId;
-                    const historyEntry = {
-                        command: cmd,
-                        title: cmdTitle,
-                        cwd: cmdCwd,
-                        timestamp: new Date().toISOString(),
-                        exitCode: -1,
-                        duration: 0,
-                        stdout: '',
-                        stderr: '',
-                        processId,
-                        status: 'running',
-                    };
-                    capturedDatabaseId = historyManager.saveCommand(historyEntry);
-                    processManager.setDatabaseId(processId, capturedDatabaseId);
-                },
-            };
-            const updateOnComplete = (result) => {
-                if (capturedDatabaseId) {
-                    historyManager.updateStatus(capturedDatabaseId, 'completed', result.exitCode, result.duration, result.stdout, result.stderr);
-                }
-                processManager.unregister(result.processId);
-                return capturedDatabaseId;
-            };
-            if (background) {
-                executeCommand(command, cwd, undefined, timeout, title, callbacks, timestamps)
-                    .then(updateOnComplete)
-                    .catch(error => logger.error({ error }, 'Background command failed'));
-                // Wait for processId
-                await new Promise(resolve => setTimeout(resolve, 50));
-                return {
-                    content: [{
-                            type: 'text',
-                            text: JSON.stringify({
-                                status: 'started',
-                                processId: capturedProcessId,
-                                id: capturedDatabaseId,
-                                command,
-                                background: true,
-                            }, null, 2),
-                        }],
-                };
-            }
-            // Synchronous execution
-            const result = await executeCommand(command, cwd, undefined, timeout, title, callbacks, timestamps);
-            const commandId = updateOnComplete(result);
-            return {
-                content: [{
-                        type: 'text',
-                        text: JSON.stringify({
-                            status: 'completed',
-                            id: commandId,
-                            processId: result.processId,
-                            exitCode: result.exitCode,
-                            duration: `${result.duration}ms`,
-                            stdout: result.stdout,
-                            stderr: result.stderr,
-                        }, null, 2),
-                    }],
-            };
+        const context = {
+            historyManager,
+            version: packageJson.version,
+            // In runtime mode, singletons will be used via getProcessManager/getWhitelistManager
+        };
+        switch (name) {
+            case 'execute_command':
+                return await handleExecuteCommand(args, context);
+            case 'get_command':
+                return await handleGetCommand(args, context);
+            case 'get_running_commands':
+                return await handleGetRunningCommands(context);
+            case 'terminate_command':
+                return await handleTerminateCommand(args, context);
+            case 'get_version':
+                return await handleGetVersion(context);
+            default:
+                throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
         }
-        // Get command
-        if (name === 'get_command') {
-            const params = z.object({
-                commandId: z.number().optional(),
-                processId: z.number().optional(),
-            }).parse(args);
-            let command;
-            if (params.commandId !== undefined) {
-                command = historyManager.getCommandById(params.commandId);
-            }
-            else if (params.processId !== undefined) {
-                command = historyManager.getCommandByProcessId(params.processId);
-            }
-            else {
-                return {
-                    content: [{
-                            type: 'text',
-                            text: JSON.stringify({ error: 'Either commandId or processId required' }, null, 2),
-                        }],
-                };
-            }
-            if (!command) {
-                return {
-                    content: [{
-                            type: 'text',
-                            text: JSON.stringify({ error: 'Command not found' }, null, 2),
-                        }],
-                };
-            }
-            return {
-                content: [{
-                        type: 'text',
-                        text: JSON.stringify({
-                            id: command.id,
-                            processId: command.processId,
-                            command: command.command,
-                            exitCode: command.exitCode,
-                            duration: `${command.duration}ms`,
-                            stdout: command.stdout,
-                            stderr: command.stderr,
-                        }, null, 2),
-                    }],
-            };
-        }
-        // Get running commands
-        if (name === 'get_running_commands') {
-            const running = processManager.getRunning();
-            return {
-                content: [{
-                        type: 'text',
-                        text: JSON.stringify({
-                            count: running.length,
-                            running: running.map(r => ({ ...r, duration: `${r.duration}ms` })),
-                        }, null, 2),
-                    }],
-            };
-        }
-        // Terminate command
-        if (name === 'terminate_command') {
-            const params = z.object({ processId: z.number() }).parse(args);
-            const success = processManager.kill(params.processId);
-            return {
-                content: [{
-                        type: 'text',
-                        text: JSON.stringify({
-                            processId: params.processId,
-                            success,
-                            message: success ? 'Process terminated' : 'Process not found',
-                        }, null, 2),
-                    }],
-            };
-        }
-        // Get version
-        if (name === 'get_version') {
-            return {
-                content: [{
-                        type: 'text',
-                        text: JSON.stringify({
-                            name: 'basher-light',
-                            version: packageJson.version,
-                            description: 'Minimal Basher with 5 essential tools',
-                        }, null, 2),
-                    }],
-            };
-        }
-        throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
     }
     catch (error) {
         logger.error({ error, tool: name }, 'Tool execution failed');
