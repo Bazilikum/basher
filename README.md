@@ -1,4 +1,4 @@
-# Basher
+# » basher
 
 MCP server for executing shell commands with enhanced logging, history tracking, and improved visibility over standard bash execution.
 
