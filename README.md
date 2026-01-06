@@ -30,8 +30,14 @@ MCP server for executing shell commands with enhanced logging, history tracking,
 
 ## Quick Install
 
+**Full Version** (27 tools):
 ```bash
 claude mcp add --transport stdio basher --env WEB_PORT=3000 -- npx -y github:Bazilikum/basher --project "$(pwd)"
+```
+
+**Basher Light** (5 tools, ~80% fewer tokens):
+```bash
+claude mcp add --transport stdio basher-light -- npx -y github:Bazilikum/basher/dist/index-light.js --project "$(pwd)"
 ```
 
 **Verify installation:**
